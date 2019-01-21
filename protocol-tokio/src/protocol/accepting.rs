@@ -11,28 +11,28 @@ use std::{self, io::Cursor, vec};
 
 use super::{nt, Connection, Handshake, Message, NodeId};
 
-enum AcceptingState<T> {
+enum AcceptingState<T, M> {
     NtAccepting(nt::Accepting<T>),
-    ExpectNewLightWeightId(StreamFuture<Connection<T>>),
-    ExpectHandshake(StreamFuture<Connection<T>>),
-    ExpectNodeId(StreamFuture<Connection<T>>),
-    SendHandshake(SendAll<Connection<T>, IterOk<vec::IntoIter<nt::Event>, std::io::Error>>),
+    ExpectNewLightWeightId(StreamFuture<Connection<T, M>>),
+    ExpectHandshake(StreamFuture<Connection<T, M>>),
+    ExpectNodeId(StreamFuture<Connection<T, M>>),
+    SendHandshake(SendAll<Connection<T, M>, IterOk<vec::IntoIter<nt::Event>, std::io::Error>>),
     Consumed,
 }
 
-enum Transition<T> {
-    Connected(Connection<T>),
-    ReceivedNewLightWeightId(Connection<T>),
-    ReceivedHandshake(Connection<T>),
-    ReceivedNodeId(Connection<T>),
-    HandshakeSent(Connection<T>),
+enum Transition<T,M> {
+    Connected(Connection<T,M>),
+    ReceivedNewLightWeightId(Connection<T,M>),
+    ReceivedHandshake(Connection<T,M>),
+    ReceivedNodeId(Connection<T,M>),
+    HandshakeSent(Connection<T,M>),
 }
 
-pub struct Accepting<T> {
-    state: AcceptingState<T>,
+pub struct Accepting<T, M> {
+    state: AcceptingState<T, M>,
 }
 
-impl<T: AsyncRead + AsyncWrite> Accepting<T> {
+impl<T: AsyncRead + AsyncWrite, M> Accepting<T, M> {
     pub fn new(inner: T) -> Self {
         Accepting {
             state: AcceptingState::NtAccepting(nt::Connection::accept(inner)),
@@ -40,8 +40,8 @@ impl<T: AsyncRead + AsyncWrite> Accepting<T> {
     }
 }
 
-impl<T: AsyncRead + AsyncWrite> Future for Accepting<T> {
-    type Item = Connection<T>;
+impl<T: AsyncRead + AsyncWrite, M> Future for Accepting<T, M> {
+    type Item = Connection<T, M>;
     type Error = AcceptingError;
 
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {

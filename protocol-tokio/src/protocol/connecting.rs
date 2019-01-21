@@ -12,28 +12,28 @@ use cbor_event::{self, de::Deserializer};
 
 use super::{nt, Connection, Handshake, Message, NodeId};
 
-enum ConnectingState<T> {
+enum ConnectingState<T, M> {
     NtConnecting(nt::Connecting<T>),
-    SendHandshake(SendAll<Connection<T>, IterOk<vec::IntoIter<nt::Event>, ::std::io::Error>>),
-    ExpectNewLightWeightId(StreamFuture<Connection<T>>),
-    ExpectHandshake(StreamFuture<Connection<T>>),
-    ExpectNodeId(StreamFuture<Connection<T>>),
+    SendHandshake(SendAll<Connection<T, M>, IterOk<vec::IntoIter<nt::Event>, ::std::io::Error>>),
+    ExpectNewLightWeightId(StreamFuture<Connection<T, M>>),
+    ExpectHandshake(StreamFuture<Connection<T, M>>),
+    ExpectNodeId(StreamFuture<Connection<T, M>>),
     Consumed,
 }
 
-enum Transition<T> {
-    Connected(Connection<T>),
-    HandshakeSent(Connection<T>),
-    ReceivedNewLightWeightId(Connection<T>),
-    ReceivedHandshake(Connection<T>),
-    ReceivedNodeId(Connection<T>),
+enum Transition<T, M> {
+    Connected(Connection<T, M>),
+    HandshakeSent(Connection<T, M>),
+    ReceivedNewLightWeightId(Connection<T, M>),
+    ReceivedHandshake(Connection<T, M>),
+    ReceivedNodeId(Connection<T, M>),
 }
 
-pub struct Connecting<T> {
-    state: ConnectingState<T>,
+pub struct Connecting<T,M> {
+    state: ConnectingState<T, M>,
 }
 
-impl<T: AsyncRead + AsyncWrite> Connecting<T> {
+impl<T: AsyncRead + AsyncWrite, M> Connecting<T,M> {
     pub fn new(inner: T) -> Self {
         Connecting {
             state: ConnectingState::NtConnecting(nt::Connection::connect(inner)),
@@ -41,8 +41,8 @@ impl<T: AsyncRead + AsyncWrite> Connecting<T> {
     }
 }
 
-impl<T: AsyncRead + AsyncWrite> Future for Connecting<T> {
-    type Item = Connection<T>;
+impl<T: AsyncRead + AsyncWrite, M> Future for Connecting<T,M> {
+    type Item = Connection<T,M>;
     type Error = ConnectingError;
 
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {

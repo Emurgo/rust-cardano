@@ -23,6 +23,7 @@ pub use self::connecting::{Connecting, ConnectingError};
 pub use self::inbound_stream::{Inbound, InboundError, InboundStream};
 pub use self::outbound_sink::{Outbound, OutboundError, OutboundSink};
 pub use network_core::server;
+use std::marker::PhantomData;
 
 /// the connection state, shared between the `ConnectionStream` and the `ConnectionSink`.
 ///
@@ -66,16 +67,18 @@ impl ConnectionState {
 ///
 /// Once established call `split` to get the inbound stream
 /// and the outbound sink and starts processing queries
-pub struct Connection<T> {
+pub struct Connection<T, M> {
     connection: nt::Connection<T>,
     state: Arc<Mutex<ConnectionState>>,
+    message_type: PhantomData<M>,
 }
 
-impl<T: AsyncRead + AsyncWrite> Connection<T> {
+impl<T: AsyncRead + AsyncWrite, M> Connection<T, M> {
     fn new(connection: nt::Connection<T>) -> Self {
         Connection {
             connection: connection,
             state: Arc::new(Mutex::new(ConnectionState::new())),
+            message_type: PhantomData,
         }
     }
 
@@ -89,12 +92,12 @@ impl<T: AsyncRead + AsyncWrite> Connection<T> {
 
     /// this function is to use when establishing a connection with
     /// with a remote.
-    pub fn connect(inner: T) -> Connecting<T> {
+    pub fn connect(inner: T) -> Connecting<T, M> {
         Connecting::new(inner)
     }
 
     /// this function is to use when receiving inbound connection
-    pub fn accept(inner: T) -> Accepting<T> {
+    pub fn accept(inner: T) -> Accepting<T, M> {
         Accepting::new(inner)
     }
 
@@ -119,7 +122,7 @@ impl<T: AsyncRead + AsyncWrite> Connection<T> {
     }
 }
 
-impl<T: AsyncRead> Stream for Connection<T> {
+impl<T: AsyncRead, M> Stream for Connection<T, M> {
     type Item = nt::Event;
     type Error = nt::DecodeEventError;
 
@@ -127,7 +130,7 @@ impl<T: AsyncRead> Stream for Connection<T> {
         self.connection.poll()
     }
 }
-impl<T: AsyncWrite> Sink for Connection<T> {
+impl<T: AsyncWrite, M> Sink for Connection<T, M> {
     type SinkItem = nt::Event;
     type SinkError = io::Error;
 

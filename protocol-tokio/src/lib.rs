@@ -1,13 +1,14 @@
 #[macro_use]
 extern crate cbor_event;
 extern crate bytes;
-extern crate cardano;
 extern crate tokio_codec;
 extern crate tokio_io;
 #[macro_use]
 extern crate futures;
 #[macro_use]
 extern crate log;
+
+extern crate network_core;
 
 #[cfg(test)]
 #[macro_use]

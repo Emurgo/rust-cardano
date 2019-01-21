@@ -16,12 +16,13 @@ use tokio_io::{AsyncRead, AsyncWrite};
 
 pub use self::accepting::{Accepting, AcceptingError};
 pub use self::codec::{
-    Block, BlockHeaders, GetBlockHeaders, GetBlocks, HandlerSpec, HandlerSpecs, Handshake,
+    BlockHeaders, GetBlockHeaders, GetBlocks, HandlerSpec, HandlerSpecs, Handshake,
     KeepAlive, Message, MessageType, NodeId, Response,
 };
 pub use self::connecting::{Connecting, ConnectingError};
 pub use self::inbound_stream::{Inbound, InboundError, InboundStream};
 pub use self::outbound_sink::{Outbound, OutboundError, OutboundSink};
+pub use network_core::server;
 
 /// the connection state, shared between the `ConnectionStream` and the `ConnectionSink`.
 ///
@@ -97,7 +98,17 @@ impl<T: AsyncRead + AsyncWrite> Connection<T> {
         Accepting::new(inner)
     }
 
-    pub fn split(self) -> (OutboundSink<T>, InboundStream<T>) {
+    pub fn split<B: server::block::BlockService,Q: server::transaction::TransactionService>(self) -> (OutboundSink<T,B,Q>, InboundStream<T,B,Q>)
+    where
+        <B as server::block::BlockService>::Header: cbor_event::Serialize,
+        <B as server::block::BlockService>::Header: cbor_event::Deserialize,
+        <B as server::block::BlockService>::BlockId: cbor_event::Serialize,
+        <B as server::block::BlockService>::BlockId: cbor_event::Deserialize,
+        <B as server::block::BlockService>::Block: cbor_event::Serialize,
+        <B as server::block::BlockService>::Block: cbor_event::Deserialize,
+        <Q as server::transaction::TransactionService>::TransactionId: cbor_event::Serialize,
+        <Q as server::transaction::TransactionService>::TransactionId: cbor_event::Deserialize,
+    {
         let state = self.state;
         let (sink, stream) = self.connection.split();
 

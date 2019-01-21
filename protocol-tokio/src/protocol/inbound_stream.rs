@@ -1,15 +1,16 @@
 use super::{
     nt, ConnectionState, KeepAlive, LightWeightConnectionState, Message, NodeId, Response,
 };
-use super::{Block, BlockHeaders, GetBlockHeaders, GetBlocks};
+use super::{BlockHeaders, GetBlockHeaders, GetBlocks};
 use bytes::Bytes;
-use cardano::tx::TxAux;
 use futures::{stream::SplitStream, Async, Poll, Stream};
 use std::{
     io,
     sync::{Arc, Mutex},
 };
 use tokio_io::AsyncRead;
+use network_core::server;
+use std::marker::PhantomData;
 
 #[derive(Debug)]
 pub enum InboundError {
@@ -44,28 +45,35 @@ impl From<nt::DecodeEventError> for InboundError {
 }
 
 #[derive(Debug)]
-pub enum Inbound {
+pub enum Inbound<B,T>
+where
+    B: server::block::BlockService,
+    T: server::transaction::TransactionService,
+{
     NothingExciting,
     NewConnection(nt::LightWeightConnectionId),
 
     // need to call Connection::ack_node_id(node_id)
     NewNode(nt::LightWeightConnectionId, NodeId),
-    GetBlockHeaders(nt::LightWeightConnectionId, GetBlockHeaders),
-    BlockHeaders(nt::LightWeightConnectionId, Response<BlockHeaders, String>),
-    GetBlocks(nt::LightWeightConnectionId, GetBlocks),
-    Block(nt::LightWeightConnectionId, Response<Block, String>),
-    SendTransaction(nt::LightWeightConnectionId, TxAux),
+    GetBlockHeaders(nt::LightWeightConnectionId, GetBlockHeaders<B::Header>),
+    BlockHeaders(nt::LightWeightConnectionId, Response<BlockHeaders<B::Header>, String>),
+    GetBlocks(nt::LightWeightConnectionId, GetBlocks<B::Block>),
+    Block(nt::LightWeightConnectionId, Response<B::Block, String>),
+    SendTransaction(nt::LightWeightConnectionId, T::TransactionId),
     TransactionReceived(nt::LightWeightConnectionId, Response<bool, String>),
     Subscribe(nt::LightWeightConnectionId, KeepAlive),
     Data(nt::LightWeightConnectionId, Bytes),
 }
 
-pub struct InboundStream<T> {
+pub struct InboundStream<T,B,Q> {
     stream: SplitStream<nt::Connection<T>>,
     state: Arc<Mutex<ConnectionState>>,
+    block: PhantomData<B>,
+    transaction: PhantomData<Q>,
 }
-impl<T: AsyncRead> Stream for InboundStream<T> {
-    type Item = Inbound;
+impl<T: AsyncRead, B: server::block::BlockService, Q: server::transaction::TransactionService> Stream for InboundStream<T, B, Q>
+{
+    type Item = Inbound<B,Q>;
     type Error = InboundError;
 
     fn poll(&mut self) -> Poll<Option<Self::Item>, Self::Error> {
@@ -78,9 +86,9 @@ impl<T: AsyncRead> Stream for InboundStream<T> {
         }
     }
 }
-impl<T> InboundStream<T> {
+impl<T,B: server::block::BlockService,Q: server::transaction::TransactionService> InboundStream<T,B,Q> {
     pub fn new(stream: SplitStream<nt::Connection<T>>, state: Arc<Mutex<ConnectionState>>) -> Self {
-        InboundStream { stream, state }
+        InboundStream { stream, state, block:PhantomData, transaction:PhantomData }
     }
 
     /// this function will inbound events
@@ -91,7 +99,8 @@ impl<T> InboundStream<T> {
     /// On Error, the future will return the error that happened and the connection
     /// so we can decide wether to stop the connection or to recover from it.
     ///
-    fn process_event(&mut self, event: nt::Event) -> Result<Inbound, InboundError> {
+    fn process_event(&mut self, event: nt::Event) -> Result<Inbound<B,Q>, InboundError> 
+    {
         match Message::from_nt_event(event) {
             Message::CreateLightWeightConnectionId(lwcid) => {
                 self.process_new_light_connection(lwcid)
@@ -135,7 +144,7 @@ impl<T> InboundStream<T> {
     fn process_new_light_connection(
         &mut self,
         lwcid: nt::LightWeightConnectionId,
-    ) -> Result<Inbound, InboundError> {
+    ) -> Result<Inbound<B,Q>, InboundError> {
         let mut state = self.state.lock().unwrap();
         if state.server_handles.contains_key(&lwcid) {
             Err(InboundError::RemoteCreatedDuplicatedLightConnection(lwcid))
@@ -153,7 +162,7 @@ impl<T> InboundStream<T> {
     fn process_close_light_connection(
         &mut self,
         lwcid: nt::LightWeightConnectionId,
-    ) -> Result<Inbound, InboundError> {
+    ) -> Result<Inbound<B,Q>, InboundError> {
         let mut state = self.state.lock().unwrap();
         let result = state.server_handles.remove(&lwcid);
         match result {
@@ -177,7 +186,7 @@ impl<T> InboundStream<T> {
         &mut self,
         lwcid: nt::LightWeightConnectionId,
         node_id: NodeId,
-    ) -> Result<Inbound, InboundError> {
+    ) -> Result<Inbound<B,Q>, InboundError> {
         let mut state = self.state.lock().unwrap();
         if let Some(light_connection) = state.server_handles.get_mut(&lwcid) {
             light_connection.node = Some(node_id);
@@ -191,7 +200,7 @@ impl<T> InboundStream<T> {
         &mut self,
         lwcid: nt::LightWeightConnectionId,
         node_id: NodeId,
-    ) -> Result<Inbound, InboundError> {
+    ) -> Result<Inbound<B,Q>, InboundError> {
         let mut state = self.state.lock().unwrap();
         match state.server_handles.get_mut(&lwcid) {
             None => {
@@ -219,9 +228,9 @@ impl<T> InboundStream<T> {
         lwcid: nt::LightWeightConnectionId,
         f: F,
         t: A,
-    ) -> Result<Inbound, InboundError>
+    ) -> Result<Inbound<B,Q>, InboundError>
     where
-        F: FnOnce(nt::LightWeightConnectionId, A) -> Inbound,
+        F: FnOnce(nt::LightWeightConnectionId, A) -> Inbound<B,Q>,
     {
         let state = self.state.lock().unwrap();
         let light_connection = state.server_handles.get(&lwcid).cloned();

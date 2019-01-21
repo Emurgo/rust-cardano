@@ -10,7 +10,7 @@ use tokio_io::{AsyncRead, AsyncWrite};
 
 use cbor_event::{self, de::Deserializer};
 
-use super::{nt, Connection, Handshake, Message, NodeId};
+use super::{nt, Connection, Handshake, Message, NodeId, raw_msg_to_nt};
 
 enum ConnectingState<T, M> {
     NtConnecting(nt::Connecting<T>),
@@ -122,10 +122,9 @@ impl<T: AsyncRead + AsyncWrite, M> Future for Connecting<T,M> {
                     let lid = connection.get_next_light_id();
                     let nid = connection.get_next_node_id();
                     let commands = stream::iter_ok::<_, ::std::io::Error>(vec![
-                        Message::CreateLightWeightConnectionId(lid).to_nt_event(),
-                        Message::Bytes(lid, cbor!(Handshake::default()).unwrap().into())
-                            .to_nt_event(),
-                        Message::CreateNodeId(lid, nid).to_nt_event(),
+                        raw_msg_to_nt(Message::CreateLightWeightConnectionId(lid)),
+                        raw_msg_to_nt(Message::Bytes(lid, cbor!(Handshake::default()).unwrap().into())),
+                        raw_msg_to_nt(Message::CreateNodeId(lid, nid)),
                     ]);
                     let send_all = connection.send_all(commands);
                     self.state = ConnectingState::SendHandshake(send_all);

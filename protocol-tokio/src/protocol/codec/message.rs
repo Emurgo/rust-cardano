@@ -80,10 +80,7 @@ impl de::Deserialize for MessageType {
 pub type KeepAlive = bool;
 
 #[derive(Clone, Debug)]
-pub enum Message<B,T>
-where
-    B: server::block::BlockService,
-    T: server::transaction::TransactionService,
+pub enum Message<M>
 {
     CreateLightWeightConnectionId(nt::LightWeightConnectionId),
     CloseConnection(nt::LightWeightConnectionId),
@@ -93,7 +90,16 @@ where
     ProbeSocketAck(nt::LightWeightConnectionId),
     CreateNodeId(nt::LightWeightConnectionId, NodeId),
     AckNodeId(nt::LightWeightConnectionId, NodeId),
+    Bytes(nt::LightWeightConnectionId, Bytes),
 
+    UserMessage(M),
+}
+
+pub enum ChainMessage<B,T>
+where
+    B: server::block::BlockService,
+    T: server::transaction::TransactionService,
+{
     GetBlockHeaders(nt::LightWeightConnectionId, GetBlockHeaders<B::BlockId>),
     BlockHeaders(nt::LightWeightConnectionId, Response<B::Header, String>),
     GetBlocks(nt::LightWeightConnectionId, GetBlocks<B::Header>),
@@ -101,11 +107,31 @@ where
     SendTransaction(nt::LightWeightConnectionId, T::TransactionId),
     TransactionReceived(nt::LightWeightConnectionId, Response<bool, String>),
     Subscribe(nt::LightWeightConnectionId, KeepAlive),
-    Bytes(nt::LightWeightConnectionId, Bytes),
 }
 
-impl<B: server::block::BlockService,T: server::transaction::TransactionService> Message<B,T>
-    where
+trait AsNtEvent
+where
+    Self: std::marker::Sized
+{
+    fn to_nt(self) -> nt::Event;
+    fn try_from_nt(lwcid: nt::LightWeightConnectionId, bytes: &Bytes) -> Option<Self>; 
+}
+
+pub struct Any();
+
+impl AsNtEvent for Any
+{
+    fn to_nt(self) -> nt::Event {
+        unimplemented!()
+    }
+
+    fn try_from_nt(lwcid: nt::LightWeightConnectionId, bytes: &Bytes) -> Option<Self> {
+        None
+    }
+}
+
+impl<B: server::block::BlockService,T: server::transaction::TransactionService> AsNtEvent for ChainMessage<B,T>
+where
     <B as server::block::BlockService>::BlockId: cbor_event::Deserialize,
     <B as server::block::BlockService>::BlockId: cbor_event::Serialize,
     <B as server::block::BlockService>::Block: cbor_event::Deserialize,
@@ -115,6 +141,59 @@ impl<B: server::block::BlockService,T: server::transaction::TransactionService> 
     <T as server::transaction::TransactionService>::TransactionId: cbor_event::Serialize,
     <T as server::transaction::TransactionService>::TransactionId: cbor_event::Deserialize,
 {
+
+    fn to_nt(self) -> nt::Event {
+        use self::nt::{Event::*};
+        match self {
+            ChainMessage::GetBlockHeaders(lwcid, gbh) =>
+                Data(lwcid, MessageType::MsgGetHeaders.encode_with(&gbh)),
+            ChainMessage::BlockHeaders(lwcid, bh) =>
+                Data(lwcid, cbor!(&bh).unwrap().into()),
+            ChainMessage::GetBlocks(lwcid, gb) =>
+                Data(lwcid, MessageType::MsgGetBlocks.encode_with(&gb)),
+            ChainMessage::Block(lwcid, b) =>
+                Data(lwcid, cbor!(&b).unwrap().into()),
+            ChainMessage::SendTransaction(lwcid, tx) =>
+                Data(lwcid, cbor!(&tx).unwrap().into()),
+            ChainMessage::TransactionReceived(lwcid, rep) =>
+                Data(lwcid, cbor!(&rep).unwrap().into()),
+            ChainMessage::Subscribe(lwcid, keep_alive) => {
+                let keep_alive: u64 = if keep_alive { 43 } else { 42 };
+                Data(lwcid, MessageType::MsgSubscribe1.encode_with(&keep_alive))
+            }
+        }
+    }
+
+    fn try_from_nt(lwcid: nt::LightWeightConnectionId, bytes: &Bytes) -> Option<Self> {
+        let mut cbor = Deserializer::from(Cursor::new(bytes.deref()));
+        let msg_type: MessageType = cbor.deserialize().unwrap();
+        match msg_type {
+            MessageType::MsgGetHeaders => Some(ChainMessage::GetBlockHeaders(
+                lwcid,
+                cbor.deserialize_complete().unwrap(),
+            )),
+            MessageType::MsgHeaders => Some(ChainMessage::BlockHeaders(
+                lwcid,
+                cbor.deserialize_complete().unwrap(),
+            )),
+            MessageType::MsgGetBlocks => Some(ChainMessage::GetBlocks(
+                lwcid,
+                cbor.deserialize_complete().unwrap(),
+            )),
+            MessageType::MsgBlock =>
+                Some(ChainMessage::Block(lwcid, cbor.deserialize_complete().unwrap())),
+            MessageType::MsgSubscribe1 => {
+                let v: u64 = cbor.deserialize_complete().unwrap();
+                let keep_alive = v == 43;
+                Some(ChainMessage::Subscribe(lwcid, keep_alive))
+            },
+            _ => unimplemented!(),
+        }
+    }
+}
+
+
+impl<M: AsNtEvent> Message<M> {
     pub fn to_nt_event(self) -> nt::Event
     {
         use self::nt::{ControlHeader::*, Event::*};
@@ -137,28 +216,12 @@ impl<B: server::block::BlockService,T: server::transaction::TransactionService> 
                 bytes.put_u64_be(*node_id);
                 Data(lwcid, bytes.freeze())
             }
-            Message::GetBlockHeaders(lwcid, gbh) => {
-                Data(lwcid, MessageType::MsgGetHeaders.encode_with(&gbh))
-            }
-            Message::BlockHeaders(lwcid, bh) => Data(lwcid, cbor!(&bh).unwrap().into()),
-            Message::GetBlocks(lwcid, gb) => {
-                Data(lwcid, MessageType::MsgGetBlocks.encode_with(&gb))
-            }
-            Message::Block(lwcid, b) => Data(lwcid, cbor!(&b).unwrap().into()),
-            Message::SendTransaction(lwcid, tx) => Data(lwcid, cbor!(&tx).unwrap().into()),
-            Message::TransactionReceived(lwcid, rep) => Data(lwcid, cbor!(&rep).unwrap().into()),
-            Message::Subscribe(lwcid, keep_alive) => {
-                let keep_alive: u64 = if keep_alive { 43 } else { 42 };
-                Data(lwcid, MessageType::MsgSubscribe1.encode_with(&keep_alive))
-            }
+            Message::UserMessage(msg) => msg.to_nt(),
             Message::Bytes(lwcid, bytes) => Data(lwcid, bytes),
         }
     }
 
     pub fn from_nt_event(event: nt::Event) -> Self
-    where
-        <B as server::block::BlockService>::Block: cbor_event::Deserialize,
-        <B as server::block::BlockService>::Header: cbor_event::Deserialize,
     {
         Message::expect_control(event)
             .or_else(Message::expect_bytes)
@@ -180,44 +243,23 @@ impl<B: server::block::BlockService,T: server::transaction::TransactionService> 
     }
 
     pub fn expect_bytes(event: nt::Event) -> Result<Self, nt::Event>
-    where
-        <B as server::block::BlockService>::Block: cbor_event::Deserialize,
-        <B as server::block::BlockService>::Header: cbor_event::Deserialize,
     {
         let (lwcid, bytes) = event.expect_data()?;
         if let Some(msg) = decode_node_ack_or_syn(lwcid, &bytes) {
             return Ok(msg);
         }
-
-        let mut cbor = Deserializer::from(Cursor::new(bytes.deref()));
-        let msg_type: MessageType = cbor.deserialize().unwrap();
-        match msg_type {
-            MessageType::MsgGetHeaders => Ok(Message::GetBlockHeaders(
-                lwcid,
-                cbor.deserialize_complete().unwrap(),
-            )),
-            MessageType::MsgHeaders => Ok(Message::BlockHeaders(
-                lwcid,
-                cbor.deserialize_complete().unwrap(),
-            )),
-            MessageType::MsgGetBlocks => Ok(Message::GetBlocks(
-                lwcid,
-                cbor.deserialize_complete().unwrap(),
-            )),
-            MessageType::MsgBlock => {
-                Ok(Message::Block(lwcid, cbor.deserialize_complete().unwrap()))
-            }
-            MessageType::MsgSubscribe1 => {
-                let v: u64 = cbor.deserialize_complete().unwrap();
-                let keep_alive = v == 43;
-                Ok(Message::Subscribe(lwcid, keep_alive))
-            }
-            _ => unimplemented!(),
+        if let Some(msg) = AsNtEvent::try_from_nt(lwcid, &bytes) {
+            return Ok(Message::UserMessage(msg));
         }
+        Err(event)
     }
 }
 
-fn decode_node_ack_or_syn<B: server::block::BlockService, T: server::transaction::TransactionService>(lwcid: nt::LightWeightConnectionId, bytes: &Bytes) -> Option<Message<B,T>> {
+pub fn raw_msg_to_nt(msg: Message<Any>) ->  nt::Event {
+    msg.to_nt_event()
+}
+
+fn decode_node_ack_or_syn<M>(lwcid: nt::LightWeightConnectionId, bytes: &Bytes) -> Option<Message<M>> {
     use bytes::{Buf, IntoBuf};
     if bytes.len() != 9 {
         return None;

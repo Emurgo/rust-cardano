@@ -1,5 +1,5 @@
 use super::{
-    nt, ConnectionState, KeepAlive, LightWeightConnectionState, Message, NodeId, Response,
+    nt, ConnectionState, KeepAlive, LightWeightConnectionState, Message, NodeId, Response,ChainMessage
 };
 use super::{BlockHeaders, GetBlockHeaders, GetBlocks};
 use bytes::Bytes;
@@ -120,21 +120,21 @@ impl<T,B: server::block::BlockService,Q: server::transaction::TransactionService
             }
             Message::CreateNodeId(lwcid, node_id) => self.process_create_node_id(lwcid, node_id),
             Message::AckNodeId(lwcid, node_id) => self.process_ack_node_id(lwcid, node_id),
-            Message::GetBlockHeaders(lwcid, gbh) => {
+            Message::UserMessage(ChainMessage::GetBlockHeaders(lwcid, gbh)) => {
                 self.forward_message(lwcid, Inbound::GetBlockHeaders, gbh)
             }
-            Message::BlockHeaders(lwcid, bh) => {
+            Message::UserMessage(ChainMessage::BlockHeaders(lwcid, bh)) => {
                 self.forward_message(lwcid, Inbound::BlockHeaders, bh)
             }
-            Message::SendTransaction(lwcid, st) => {
+            Message::UserMessage(ChainMessage::SendTransaction(lwcid, st)) => {
                 self.forward_message(lwcid, Inbound::SendTransaction, st)
             }
-            Message::TransactionReceived(lwcid, r) => {
+            Message::UserMessage(ChainMessage::TransactionReceived(lwcid, r)) => {
                 self.forward_message(lwcid, Inbound::TransactionReceived, r)
             }
-            Message::GetBlocks(lwcid, gb) => self.forward_message(lwcid, Inbound::GetBlocks, gb),
-            Message::Block(lwcid, b) => self.forward_message(lwcid, Inbound::Block, b),
-            Message::Subscribe(lwcid, keep_alive) => {
+            Message::UserMessage(ChainMessage::GetBlocks(lwcid, gb)) => self.forward_message(lwcid, Inbound::GetBlocks, gb),
+            Message::UserMessage(ChainMessage::Block(lwcid, b)) => self.forward_message(lwcid, Inbound::Block, b),
+            Message::UserMessage(ChainMessage::Subscribe(lwcid, keep_alive)) => {
                 self.forward_message(lwcid, Inbound::Subscribe, keep_alive)
             }
             Message::Bytes(lwcid, bytes) => self.forward_message(lwcid, Inbound::Data, bytes),

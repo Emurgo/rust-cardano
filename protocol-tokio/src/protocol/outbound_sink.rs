@@ -5,11 +5,11 @@ use std::{
 };
 use tokio_io::AsyncWrite;
 
-use super::{nt, ConnectionState, KeepAlive, LightWeightConnectionState, Message, NodeId};
+use super::{nt, ConnectionState, KeepAlive, LightWeightConnectionState, Message, NodeId, ChainMessage};
 use network_core::server;
 use std::marker::PhantomData;
 
-pub type Outbound<B,T> = Message<B,T>;
+pub type Outbound<B,T> = Message<ChainMessage<B,T>>;
 
 #[derive(Debug)]
 pub enum OutboundError {
@@ -91,7 +91,7 @@ where
         self.new_light_connection()
             .and_then(move |(lwcid, connection)| {
                 connection
-                    .send(Message::Subscribe(lwcid, keep_alive))
+                    .send(Message::UserMessage(ChainMessage::Subscribe(lwcid, keep_alive)))
                     .map(move |connection| (lwcid, connection))
             })
     }

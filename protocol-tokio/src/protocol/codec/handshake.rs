@@ -149,7 +149,7 @@ impl fmt::Display for HandlerSpecs {
     }
 }
 
-#[derive(Debug,PartialEq,Eq, Clone, Copy, PartialOrd, Ord)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy, PartialOrd, Ord)]
 pub struct Version {
     major: u32,
     minor: u32,
@@ -158,7 +158,11 @@ pub struct Version {
 
 impl Default for Version {
     fn default() -> Self {
-        Version{major: 0, minor: 1, revision: 0}
+        Version {
+            major: 0,
+            minor: 1,
+            revision: 0,
+        }
     }
 }
 
@@ -187,7 +191,11 @@ impl de::Deserialize for Version {
         let major = raw.unsigned_integer()? as u32;
         let minor = raw.unsigned_integer()? as u32;
         let revision = raw.unsigned_integer()? as u32;
-        Ok(Version{major,minor,revision})
+        Ok(Version {
+            major,
+            minor,
+            revision,
+        })
     }
 }
 

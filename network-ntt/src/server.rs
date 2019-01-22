@@ -30,20 +30,15 @@
 //! As NT state is shared all the services could provide a uniform
 //! access to the chain state. And one could build very flexible
 //! topology.
+use cbor_event;
 use core::marker::PhantomData;
 use futures::{future, prelude::*, stream::Stream, sync::mpsc};
 use network_core::server::{self, block::BlockService, transaction::TransactionService};
-use protocol::{network_transport::LightWeightConnectionId, Inbound, Message};
+use protocol::{
+    network_transport::LightWeightConnectionId, protocol::ChainMessage, Inbound, Message,
+};
 use std::net::SocketAddr;
 use tokio::net::{TcpListener, TcpStream};
-
-// These types are loaded from cardano package,
-// because tokio-protocol is not generalized yet.
-// This should be fixed and then these types should go.
-use cardano::{
-    block::{Block, BlockHeader, HeaderHash},
-    tx::TxAux,
-};
 
 /// Internal structure of network transport node.
 #[derive(Clone)]
@@ -79,21 +74,23 @@ where
     }
 }
 
-trait SendMsg {
-    fn mk_ok_msg(id: LightWeightConnectionId, msg: Self) -> Message;
-    fn mk_err_msg(lwcid: LightWeightConnectionId, msg: String) -> Message;
+trait SendMsg<M> {
+    fn mk_ok_msg(id: LightWeightConnectionId, msg: Self) -> M;
+    fn mk_err_msg(lwcid: LightWeightConnectionId, msg: String) -> M;
 }
 
-impl SendMsg for Vec<BlockHeader> {
-    fn mk_ok_msg(lwcid: LightWeightConnectionId, hdr: Self) -> Message {
-        Message::BlockHeaders(
+impl<B: server::block::BlockService, Q: server::transaction::TransactionService>
+    SendMsg<ChainMessage<B, Q>> for Vec<B::Header>
+{
+    fn mk_ok_msg(lwcid: LightWeightConnectionId, hdr: Self) -> ChainMessage<B, Q> {
+        ChainMessage::BlockHeaders(
             lwcid,
             protocol::protocol::Response::Ok(protocol::protocol::BlockHeaders(hdr)),
         )
     }
 
-    fn mk_err_msg(lwcid: LightWeightConnectionId, msg: String) -> Message {
-        Message::BlockHeaders(lwcid, protocol::protocol::Response::Err(msg))
+    fn mk_err_msg(lwcid: LightWeightConnectionId, msg: String) -> ChainMessage<B, Q> {
+        ChainMessage::BlockHeaders(lwcid, protocol::protocol::Response::Err(msg))
     }
 }
 
@@ -108,6 +105,14 @@ pub fn accept<N: 'static, F>(
 where
     N: server::Node + Clone,
     F: future::Future<Item = (), Error = ()>,
+    <<N as server::Node>::BlockService as server::block::BlockService>::Block : cbor_event::de::Deserialize,
+    <<N as server::Node>::BlockService as server::block::BlockService>::Block : cbor_event::se::Serialize,
+    <<N as server::Node>::BlockService as server::block::BlockService>::BlockId : cbor_event::de::Deserialize,
+    <<N as server::Node>::BlockService as server::block::BlockService>::BlockId : cbor_event::se::Serialize,
+    <<N as server::Node>::BlockService as server::block::BlockService>::Header : cbor_event::de::Deserialize,
+    <<N as server::Node>::BlockService as server::block::BlockService>::Header : cbor_event::se::Serialize,
+    <<N as server::Node>::TransactionService as server::transaction::TransactionService>::TransactionId : cbor_event::de::Deserialize,
+    <<N as server::Node>::TransactionService as server::transaction::TransactionService>::TransactionId : cbor_event::se::Serialize,
 {
     protocol::Connection::accept(stream)
         .map_err(|_| ())
@@ -127,6 +132,14 @@ pub fn connect<N: 'static, F>(
 where
     N: server::Node + Clone,
     F: future::Future<Item = (), Error = ()>,
+    <<N as server::Node>::BlockService as server::block::BlockService>::Block : cbor_event::de::Deserialize,
+    <<N as server::Node>::BlockService as server::block::BlockService>::Block : cbor_event::se::Serialize,
+    <<N as server::Node>::BlockService as server::block::BlockService>::BlockId : cbor_event::de::Deserialize,
+    <<N as server::Node>::BlockService as server::block::BlockService>::BlockId : cbor_event::se::Serialize,
+    <<N as server::Node>::BlockService as server::block::BlockService>::Header : cbor_event::de::Deserialize,
+    <<N as server::Node>::BlockService as server::block::BlockService>::Header : cbor_event::se::Serialize,
+    <<N as server::Node>::TransactionService as server::transaction::TransactionService>::TransactionId : cbor_event::de::Deserialize,
+    <<N as server::Node>::TransactionService as server::transaction::TransactionService>::TransactionId : cbor_event::se::Serialize,
 {
     TcpStream::connect(&sockaddr)
         .map_err(move |_err| ())
@@ -146,13 +159,25 @@ where
 /// types that has the semantics for our application.
 pub fn run_connection<N, T>(
     server: Server<N>,
-    connection: protocol::Connection<T>,
+    connection: protocol::Connection<T, ChainMessage<N::BlockService,N::TransactionService>>,
 ) -> impl future::Future<Item = (), Error = ()>
 where
     T: tokio::io::AsyncRead + tokio::io::AsyncWrite,
     N: server::Node,
+    <<N as server::Node>::BlockService as server::block::BlockService>::Block : cbor_event::de::Deserialize,
+    <<N as server::Node>::BlockService as server::block::BlockService>::Block : cbor_event::se::Serialize,
+    <<N as server::Node>::BlockService as server::block::BlockService>::BlockId : cbor_event::de::Deserialize,
+    <<N as server::Node>::BlockService as server::block::BlockService>::BlockId : cbor_event::se::Serialize,
+    <<N as server::Node>::BlockService as server::block::BlockService>::Header : cbor_event::de::Deserialize,
+    <<N as server::Node>::BlockService as server::block::BlockService>::Header : cbor_event::se::Serialize,
+    <<N as server::Node>::TransactionService as server::transaction::TransactionService>::TransactionId : cbor_event::de::Deserialize,
+    <<N as server::Node>::TransactionService as server::transaction::TransactionService>::TransactionId : cbor_event::se::Serialize,
 {
-    let (sink, stream) = connection.split();
+    let (sink, stream): (
+        protocol_tokio::OutboundSink<T, N::BlockService, N::TransactionService>,
+        protocol_tokio::InboundStream<T, N::BlockService, N::TransactionService>,
+    ) = connection.split();
+
     let (sink_tx, sink_rx) = mpsc::unbounded();
 
     // Processing of the incomming messages.
@@ -180,70 +205,52 @@ where
                     //);
                     future::Either::A(future::ok(()))
                 }
-                Inbound::GetBlockHeaders(lwcid, get_block_header) => match get_block_header.to {
-                    Some(to) => {
-                        let from = from_block_headers::<N>(get_block_header.from);
-                        let to = convert_block_header(&server, to);
-                        let handle = ReplyHandle::new(lwcid, &sink_tx);
-                        future::Either::B(future::Either::A(
-                            server
-                                .node
-                                .block_service()
-                                .unwrap()
-                                .block_headers(&from, &to)
+                Inbound::GetBlockHeaders(lwcid, get_block_header) => {
+                    let handle: ReplyHandle<
+                        T,
+                        ChainMessage<N::BlockService, N::TransactionService>,
+                    > = ReplyHandle::new(lwcid, &sink_tx);
+                    future::Either::B(future::Either::A({
+                        let mut service = server
+                            .node
+                            .block_service()
+                            .expect("block service is not implemented");
+                        match get_block_header.to {
+                            Some(to) => service.block_headers(&get_block_header.from, &to),
+                            None => service.block_headers_to_tip(&get_block_header.from),
+                        }
+                        .map_err(|err| err.to_string())
+                        .and_then(move |headers| {
+                            Stream::collect(headers)
                                 .map_err(|err| err.to_string())
-                                .then(move |result| match result {
-                                    Ok(headers) => future::Either::A(
-                                        Stream::collect(headers)
-                                            .map_err(|err| err.to_string())
-                                            .and_then(|hdrs| {
-                                                let hdrs = to_block_headers::<N>(hdrs);
-                                                handle.send_one(hdrs).map_err(|err| err.to_string())
-                                            }),
-                                    ),
-                                    Err(msg) => future::Either::B({
-                                        handle.send_err(msg).unwrap_or_else(|_| ());
-                                        future::ok(())
-                                    }),
+                                .and_then(move |hdrs| {
+                                    let msg = ChainMessage::BlockHeaders(
+                                        lwcid,
+                                        protocol::Response::Ok(protocol::protocol::BlockHeaders(
+                                            hdrs,
+                                        )),
+                                    );
+                                    handle
+                                        .send_one(Message::UserMessage(msg))
+                                        .map_err(|err| err.to_string())
                                 })
-                                .or_else(|_| Ok(())),
-                        ))
-                    }
-                    None => {
-                        let handle = ReplyHandle::new(lwcid, &sink_tx);
-                        future::Either::B(future::Either::B(future::Either::A(
-                            server
-                                .node
-                                .block_service()
-                                .expect("block service is not implemented")
-                                .tip()
-                                .map_err(move |err| err.to_string())
-                                .then(move |result| {
-                                    match result {
-                                        Ok((block_id, block_date)) => {
-                                            let hdr = convert_block_id_to_header::<N>(
-                                                block_id, block_date,
-                                            );
-                                            handle.send_one(vec![hdr])
-                                        }
-                                        Err(msg) => handle.send_err(msg),
-                                    }
-                                    .unwrap_or_else(|_| ());
-                                    Ok(())
-                                }),
-                        )))
-                    }
-                },
+                        })
+                        .map(|_| ())
+                        .or_else(|_| {
+                            //    let msg = ChainMessage::BlockHeaders(lwcid, protocol::Response::Err(msg));
+                            //    handle2.send_one(Message::UserMessage(msg)).unwrap_or_else(|_| ());
+                            future::ok(())
+                        })
+                    }))
+                }
                 Inbound::GetBlocks(lwcid, get_blocks) => {
                     let sink = sink_tx.clone();
-                    let from = from_block_headers::<N>(vec![get_blocks.from]);
-                    let to = convert_block_header(&server, get_blocks.to);
-                    future::Either::B(future::Either::B(future::Either::B(future::Either::A(
+                    future::Either::B(future::Either::B(future::Either::A(
                         server
                             .node
                             .block_service()
                             .expect("block service is not implemented")
-                            .stream_blocks_to(&from, &to)
+                            .stream_blocks_to(&vec![get_blocks.from], &get_blocks.to)
                             .map_err(|_| ())
                             .and_then(move |blocks| {
                                 let inner1 = sink.clone();
@@ -251,11 +258,12 @@ where
                                 blocks
                                     .map_err(|_| ())
                                     .for_each(move |blk| {
-                                        let blk = convert_block::<N>(blk);
                                         inner1
-                                            .unbounded_send(Message::Block(
-                                                lwcid,
-                                                protocol::Response::Ok(blk),
+                                            .unbounded_send(Message::UserMessage(
+                                                ChainMessage::Block(
+                                                    lwcid,
+                                                    protocol::Response::Ok(blk),
+                                                ),
                                             ))
                                             .map_err(|_| ())
                                     })
@@ -265,24 +273,24 @@ where
                                     .or_else(|_| Ok(()))
                             })
                             .or_else(|_| Ok(())),
-                    ))))
+                    )))
                 }
                 Inbound::SendTransaction(_lwcid, tx) => {
-                    let tx = convert_tx(&server, tx);
-                    future::Either::B(future::Either::B(future::Either::B(future::Either::B(
+                    future::Either::B(future::Either::B(future::Either::B(
                         server
                             .node
                             .transaction_service()
                             .unwrap()
-                            .propose_transactions(&tx)
+                            .propose_transactions(&vec![tx])
                             .and_then(|_| Ok(()))
                             .or_else(|_| Ok(())),
-                    ))))
+                    )))
                 }
                 _x => future::Either::A(future::ok(())),
             }
         })
-        .map_err(|_err| ());
+        .map_err(|_err| ())
+        .map(|_| ());
 
     // Processing of the outgoing messages
     let sink = sink
@@ -297,21 +305,22 @@ where
                     message => future::Either::B(sink.send(message).map_err(|_err| ())),
                 })
                 .map(|_| ())
-        });
+        })
+        .map_err(|_| ());
 
     stream.select(sink).then(|_| Ok(()))
 }
 
 #[derive(Clone)]
-struct ReplyHandle<T> {
+struct ReplyHandle<T, M> {
     id: LightWeightConnectionId,
-    sink: mpsc::UnboundedSender<Message>,
+    sink: mpsc::UnboundedSender<Message<M>>,
     closed: bool,
     phantom: PhantomData<T>,
 }
 
-impl<T> ReplyHandle<T> {
-    pub fn new(id: LightWeightConnectionId, sink: &mpsc::UnboundedSender<Message>) -> Self {
+impl<T, M> ReplyHandle<T, M> {
+    pub fn new(id: LightWeightConnectionId, sink: &mpsc::UnboundedSender<Message<M>>) -> Self {
         Self {
             id: id,
             sink: sink.clone(),
@@ -320,23 +329,8 @@ impl<T> ReplyHandle<T> {
         }
     }
 
-    pub fn send_one(mut self, msg: T) -> Result<(), mpsc::SendError<Message>>
-    where
-        T: SendMsg,
-    {
-        self.sink.unbounded_send(SendMsg::mk_ok_msg(self.id, msg))?;
-        self.sink
-            .unbounded_send(Message::CloseConnection(self.id))?;
-        self.closed = true;
-        Ok(())
-    }
-
-    pub fn send_err(mut self, msg: String) -> Result<(), mpsc::SendError<Message>>
-    where
-        T: SendMsg,
-    {
-        self.sink
-            .unbounded_send(<T as SendMsg>::mk_err_msg(self.id, msg))?;
+    pub fn send_one(mut self, msg: Message<M>) -> Result<(), mpsc::SendError<Message<M>>> {
+        self.sink.unbounded_send(msg)?;
         self.sink
             .unbounded_send(Message::CloseConnection(self.id))?;
         self.closed = true;
@@ -344,7 +338,7 @@ impl<T> ReplyHandle<T> {
     }
 }
 
-impl<T> Drop for ReplyHandle<T> {
+impl<T, M> Drop for ReplyHandle<T, M> {
     fn drop(&mut self) {
         if !self.closed {
             self.sink
@@ -352,61 +346,4 @@ impl<T> Drop for ReplyHandle<T> {
                 .unwrap_or_default();
         }
     }
-}
-
-// Helper functions to hide cardano types.
-fn from_block_headers<N>(
-    _input: Vec<HeaderHash>,
-) -> Vec<<<N as server::Node>::BlockService as BlockService>::BlockId>
-where
-    N: server::Node,
-{
-    unimplemented!()
-}
-
-fn to_block_headers<N>(
-    _input: Vec<<<N as server::Node>::BlockService as BlockService>::Header>,
-) -> Vec<BlockHeader>
-where
-    N: server::Node,
-{
-    unimplemented!()
-}
-
-fn convert_block_header<N>(
-    _node: &Server<N>,
-    _input: HeaderHash,
-) -> <<N as server::Node>::BlockService as BlockService>::BlockId
-where
-    N: server::Node,
-{
-    unimplemented!()
-}
-
-fn convert_tx<N>(
-    _node: &Server<N>,
-    _input: TxAux,
-) -> Vec<<<N as server::Node>::TransactionService as TransactionService>::TransactionId>
-where
-    N: server::Node,
-{
-    unimplemented!()
-}
-
-fn convert_block<N>(_block: <<N as server::Node>::BlockService as BlockService>::Block) -> Block
-where
-    N: server::Node,
-{
-    unimplemented!()
-}
-
-fn convert_block_id_to_header<N>(
-    /*_node: &Server<N>,*/
-    _id: <<N as server::Node>::BlockService as BlockService>::BlockId,
-    _date: <<N as server::Node>::BlockService as BlockService>::BlockDate,
-) -> BlockHeader
-where
-    N: server::Node,
-{
-    unimplemented!()
 }

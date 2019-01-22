@@ -16,8 +16,8 @@ use tokio_io::{AsyncRead, AsyncWrite};
 
 pub use self::accepting::{Accepting, AcceptingError};
 pub use self::codec::{
-    BlockHeaders, GetBlockHeaders, GetBlocks, HandlerSpec, HandlerSpecs, Handshake,
-    KeepAlive, Message, MessageType, NodeId, Response, ChainMessage, raw_msg_to_nt
+    raw_msg_to_nt, BlockHeaders, ChainMessage, GetBlockHeaders, GetBlocks, HandlerSpec,
+    HandlerSpecs, Handshake, KeepAlive, Message, MessageType, NodeId, Response,
 };
 pub use self::connecting::{Connecting, ConnectingError};
 pub use self::inbound_stream::{Inbound, InboundError, InboundStream};
@@ -101,7 +101,9 @@ impl<T: AsyncRead + AsyncWrite, M> Connection<T, M> {
         Accepting::new(inner)
     }
 
-    pub fn split<B: server::block::BlockService,Q: server::transaction::TransactionService>(self) -> (OutboundSink<T,B,Q>, InboundStream<T,B,Q>)
+    pub fn split<B: server::block::BlockService, Q: server::transaction::TransactionService>(
+        self,
+    ) -> (OutboundSink<T, B, Q>, InboundStream<T, B, Q>)
     where
         <B as server::block::BlockService>::Header: cbor_event::Serialize,
         <B as server::block::BlockService>::Header: cbor_event::Deserialize,

@@ -9,7 +9,7 @@ use tokio_io::{AsyncRead, AsyncWrite};
 use cbor_event::de::Deserializer;
 use std::{self, io::Cursor, vec};
 
-use super::{nt, Connection, Handshake, Message, NodeId, raw_msg_to_nt};
+use super::{nt, raw_msg_to_nt, Connection, Handshake, Message, NodeId};
 
 enum AcceptingState<T, M> {
     NtAccepting(nt::Accepting<T>),
@@ -20,12 +20,12 @@ enum AcceptingState<T, M> {
     Consumed,
 }
 
-enum Transition<T,M> {
-    Connected(Connection<T,M>),
-    ReceivedNewLightWeightId(Connection<T,M>),
-    ReceivedHandshake(Connection<T,M>),
-    ReceivedNodeId(Connection<T,M>),
-    HandshakeSent(Connection<T,M>),
+enum Transition<T, M> {
+    Connected(Connection<T, M>),
+    ReceivedNewLightWeightId(Connection<T, M>),
+    ReceivedHandshake(Connection<T, M>),
+    ReceivedNodeId(Connection<T, M>),
+    HandshakeSent(Connection<T, M>),
 }
 
 pub struct Accepting<T, M> {
@@ -130,7 +130,10 @@ impl<T: AsyncRead + AsyncWrite, M> Future for Accepting<T, M> {
                     let nid = connection.get_next_node_id();
                     let commands = stream::iter_ok::<_, std::io::Error>(vec![
                         raw_msg_to_nt(Message::CreateLightWeightConnectionId(lid)),
-                        raw_msg_to_nt(Message::Bytes(lid, cbor!(Handshake::default()).unwrap().into())),
+                        raw_msg_to_nt(Message::Bytes(
+                            lid,
+                            cbor!(Handshake::default()).unwrap().into(),
+                        )),
                         raw_msg_to_nt(Message::CreateNodeId(lid, nid)),
                     ]);
                     let send_all = connection.send_all(commands);

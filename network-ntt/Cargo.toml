@@ -13,10 +13,10 @@ edition = "2018"
 slog = "^2.4.1"
 futures = "^0.1"
 tokio = "^0.1"
-cardano = { path = "../cardano" }
 network-core = { path = "../network-core" }
 chain-core = { path = "../chain-core" }
 protocol-tokio = { path = "../protocol-tokio" }
+cbor_event = "*"
 
 [dev-dependencies]
 quickcheck = "0.7"

@@ -10,7 +10,7 @@ use tokio_io::{AsyncRead, AsyncWrite};
 
 use cbor_event::{self, de::Deserializer};
 
-use super::{nt, Connection, Handshake, Message, NodeId, raw_msg_to_nt};
+use super::{nt, raw_msg_to_nt, Connection, Handshake, Message, NodeId};
 
 enum ConnectingState<T, M> {
     NtConnecting(nt::Connecting<T>),
@@ -29,11 +29,11 @@ enum Transition<T, M> {
     ReceivedNodeId(Connection<T, M>),
 }
 
-pub struct Connecting<T,M> {
+pub struct Connecting<T, M> {
     state: ConnectingState<T, M>,
 }
 
-impl<T: AsyncRead + AsyncWrite, M> Connecting<T,M> {
+impl<T: AsyncRead + AsyncWrite, M> Connecting<T, M> {
     pub fn new(inner: T) -> Self {
         Connecting {
             state: ConnectingState::NtConnecting(nt::Connection::connect(inner)),
@@ -41,8 +41,8 @@ impl<T: AsyncRead + AsyncWrite, M> Connecting<T,M> {
     }
 }
 
-impl<T: AsyncRead + AsyncWrite, M> Future for Connecting<T,M> {
-    type Item = Connection<T,M>;
+impl<T: AsyncRead + AsyncWrite, M> Future for Connecting<T, M> {
+    type Item = Connection<T, M>;
     type Error = ConnectingError;
 
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
@@ -123,7 +123,10 @@ impl<T: AsyncRead + AsyncWrite, M> Future for Connecting<T,M> {
                     let nid = connection.get_next_node_id();
                     let commands = stream::iter_ok::<_, ::std::io::Error>(vec![
                         raw_msg_to_nt(Message::CreateLightWeightConnectionId(lid)),
-                        raw_msg_to_nt(Message::Bytes(lid, cbor!(Handshake::default()).unwrap().into())),
+                        raw_msg_to_nt(Message::Bytes(
+                            lid,
+                            cbor!(Handshake::default()).unwrap().into(),
+                        )),
                         raw_msg_to_nt(Message::CreateNodeId(lid, nid)),
                     ]);
                     let send_all = connection.send_all(commands);

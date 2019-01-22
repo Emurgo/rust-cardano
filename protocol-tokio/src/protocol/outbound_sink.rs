@@ -5,11 +5,13 @@ use std::{
 };
 use tokio_io::AsyncWrite;
 
-use super::{nt, ConnectionState, KeepAlive, LightWeightConnectionState, Message, NodeId, ChainMessage};
+use super::{
+    nt, ChainMessage, ConnectionState, KeepAlive, LightWeightConnectionState, Message, NodeId,
+};
 use network_core::server;
 use std::marker::PhantomData;
 
-pub type Outbound<B,T> = Message<ChainMessage<B,T>>;
+pub type Outbound<B, T> = Message<ChainMessage<B, T>>;
 
 #[derive(Debug)]
 pub enum OutboundError {
@@ -33,7 +35,7 @@ pub struct OutboundSink<T, B, Q> {
     block: PhantomData<B>,
     transaction: PhantomData<Q>,
 }
-impl<T,B,Q> OutboundSink<T,B,Q> {
+impl<T, B, Q> OutboundSink<T, B, Q> {
     fn get_next_light_id(&mut self) -> nt::LightWeightConnectionId {
         self.state.lock().unwrap().get_next_light_id()
     }
@@ -42,7 +44,8 @@ impl<T,B,Q> OutboundSink<T,B,Q> {
         self.state.lock().unwrap().get_next_node_id()
     }
 }
-impl <T: AsyncWrite, B: server::block::BlockService, Q: server::transaction::TransactionService> OutboundSink<T,B,Q>
+impl<T: AsyncWrite, B: server::block::BlockService, Q: server::transaction::TransactionService>
+    OutboundSink<T, B, Q>
 where
     <B as server::block::BlockService>::BlockId: cbor_event::Deserialize,
     <B as server::block::BlockService>::BlockId: cbor_event::Serialize,
@@ -54,7 +57,12 @@ where
     <Q as server::transaction::TransactionService>::TransactionId: cbor_event::Deserialize,
 {
     pub fn new(sink: SplitSink<nt::Connection<T>>, state: Arc<Mutex<ConnectionState>>) -> Self {
-        OutboundSink { sink, state, block:PhantomData, transaction:PhantomData }
+        OutboundSink {
+            sink,
+            state,
+            block: PhantomData,
+            transaction: PhantomData,
+        }
     }
 
     /// create a new light weight connection with the remote peer
@@ -91,7 +99,9 @@ where
         self.new_light_connection()
             .and_then(move |(lwcid, connection)| {
                 connection
-                    .send(Message::UserMessage(ChainMessage::Subscribe(lwcid, keep_alive)))
+                    .send(Message::UserMessage(ChainMessage::Subscribe(
+                        lwcid, keep_alive,
+                    )))
                     .map(move |connection| (lwcid, connection))
             })
     }
@@ -138,7 +148,8 @@ where
     }
 }
 
-impl<T: AsyncWrite, B: server::block::BlockService, Q: server::transaction::TransactionService> Sink for OutboundSink<T, B, Q>
+impl<T: AsyncWrite, B: server::block::BlockService, Q: server::transaction::TransactionService> Sink
+    for OutboundSink<T, B, Q>
 where
     <B as server::block::BlockService>::BlockId: cbor_event::Deserialize,
     <B as server::block::BlockService>::BlockId: cbor_event::Serialize,
@@ -149,7 +160,7 @@ where
     <Q as server::transaction::TransactionService>::TransactionId: cbor_event::Serialize,
     <Q as server::transaction::TransactionService>::TransactionId: cbor_event::Deserialize,
 {
-    type SinkItem = Outbound<B,Q>;
+    type SinkItem = Outbound<B, Q>;
     type SinkError = OutboundError;
 
     fn start_send(&mut self, item: Self::SinkItem) -> StartSend<Self::SinkItem, Self::SinkError> {

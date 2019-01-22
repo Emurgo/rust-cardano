@@ -1,16 +1,17 @@
 use super::{
-    nt, ConnectionState, KeepAlive, LightWeightConnectionState, Message, NodeId, Response,ChainMessage
+    nt, ChainMessage, ConnectionState, KeepAlive, LightWeightConnectionState, Message, NodeId,
+    Response,
 };
 use super::{BlockHeaders, GetBlockHeaders, GetBlocks};
 use bytes::Bytes;
 use futures::{stream::SplitStream, Async, Poll, Stream};
+use network_core::server;
+use std::marker::PhantomData;
 use std::{
     io,
     sync::{Arc, Mutex},
 };
 use tokio_io::AsyncRead;
-use network_core::server;
-use std::marker::PhantomData;
 
 #[derive(Debug)]
 pub enum InboundError {
@@ -45,7 +46,7 @@ impl From<nt::DecodeEventError> for InboundError {
 }
 
 #[derive(Debug)]
-pub enum Inbound<B,T>
+pub enum Inbound<B, T>
 where
     B: server::block::BlockService,
     T: server::transaction::TransactionService,
@@ -55,9 +56,12 @@ where
 
     // need to call Connection::ack_node_id(node_id)
     NewNode(nt::LightWeightConnectionId, NodeId),
-    GetBlockHeaders(nt::LightWeightConnectionId, GetBlockHeaders<B::Header>),
-    BlockHeaders(nt::LightWeightConnectionId, Response<BlockHeaders<B::Header>, String>),
-    GetBlocks(nt::LightWeightConnectionId, GetBlocks<B::Block>),
+    GetBlockHeaders(nt::LightWeightConnectionId, GetBlockHeaders<B::BlockId>),
+    BlockHeaders(
+        nt::LightWeightConnectionId,
+        Response<BlockHeaders<B::Header>, String>,
+    ),
+    GetBlocks(nt::LightWeightConnectionId, GetBlocks<B::BlockId>),
     Block(nt::LightWeightConnectionId, Response<B::Block, String>),
     SendTransaction(nt::LightWeightConnectionId, T::TransactionId),
     TransactionReceived(nt::LightWeightConnectionId, Response<bool, String>),
@@ -65,15 +69,27 @@ where
     Data(nt::LightWeightConnectionId, Bytes),
 }
 
-pub struct InboundStream<T,B,Q> {
+pub struct InboundStream<T, B, Q> {
     stream: SplitStream<nt::Connection<T>>,
     state: Arc<Mutex<ConnectionState>>,
     block: PhantomData<B>,
     transaction: PhantomData<Q>,
 }
-impl<T: AsyncRead, B: server::block::BlockService, Q: server::transaction::TransactionService> Stream for InboundStream<T, B, Q>
+impl<T: AsyncRead, B: server::block::BlockService, Q: server::transaction::TransactionService>
+    Stream for InboundStream<T, B, Q>
+where
+    <B as network_core::server::block::BlockService>::Block: cbor_event::Deserialize,
+    <B as network_core::server::block::BlockService>::Block: cbor_event::Serialize,
+    <B as network_core::server::block::BlockService>::BlockId: cbor_event::Deserialize,
+    <B as network_core::server::block::BlockService>::BlockId: cbor_event::Serialize,
+    <B as network_core::server::block::BlockService>::Header: cbor_event::Deserialize,
+    <B as network_core::server::block::BlockService>::Header: cbor_event::Serialize,
+    <Q as network_core::server::transaction::TransactionService>::TransactionId:
+        cbor_event::Deserialize,
+    <Q as network_core::server::transaction::TransactionService>::TransactionId:
+        cbor_event::Serialize,
 {
-    type Item = Inbound<B,Q>;
+    type Item = Inbound<B, Q>;
     type Error = InboundError;
 
     fn poll(&mut self) -> Poll<Option<Self::Item>, Self::Error> {
@@ -86,9 +102,27 @@ impl<T: AsyncRead, B: server::block::BlockService, Q: server::transaction::Trans
         }
     }
 }
-impl<T,B: server::block::BlockService,Q: server::transaction::TransactionService> InboundStream<T,B,Q> {
+impl<T, B: server::block::BlockService, Q: server::transaction::TransactionService>
+    InboundStream<T, B, Q>
+where
+    B::BlockId: std::marker::Sized,
+    B::Header: std::marker::Sized,
+    <B as server::block::BlockService>::BlockId: cbor_event::Deserialize,
+    <B as server::block::BlockService>::BlockId: cbor_event::Serialize,
+    <B as server::block::BlockService>::Block: cbor_event::Deserialize,
+    <B as server::block::BlockService>::Block: cbor_event::Serialize,
+    <B as server::block::BlockService>::Header: cbor_event::Deserialize,
+    <B as server::block::BlockService>::Header: cbor_event::Serialize,
+    <Q as server::transaction::TransactionService>::TransactionId: cbor_event::Deserialize,
+    <Q as server::transaction::TransactionService>::TransactionId: cbor_event::Serialize,
+{
     pub fn new(stream: SplitStream<nt::Connection<T>>, state: Arc<Mutex<ConnectionState>>) -> Self {
-        InboundStream { stream, state, block:PhantomData, transaction:PhantomData }
+        InboundStream {
+            stream,
+            state,
+            block: PhantomData,
+            transaction: PhantomData,
+        }
     }
 
     /// this function will inbound events
@@ -99,9 +133,9 @@ impl<T,B: server::block::BlockService,Q: server::transaction::TransactionService
     /// On Error, the future will return the error that happened and the connection
     /// so we can decide wether to stop the connection or to recover from it.
     ///
-    fn process_event(&mut self, event: nt::Event) -> Result<Inbound<B,Q>, InboundError> 
-    {
-        match Message::from_nt_event(event) {
+    fn process_event(&mut self, event: nt::Event) -> Result<Inbound<B, Q>, InboundError> {
+        let msg: Message<ChainMessage<B, Q>> = Message::from_nt_event(event);
+        match msg {
             Message::CreateLightWeightConnectionId(lwcid) => {
                 self.process_new_light_connection(lwcid)
             }
@@ -120,31 +154,47 @@ impl<T,B: server::block::BlockService,Q: server::transaction::TransactionService
             }
             Message::CreateNodeId(lwcid, node_id) => self.process_create_node_id(lwcid, node_id),
             Message::AckNodeId(lwcid, node_id) => self.process_ack_node_id(lwcid, node_id),
-            Message::UserMessage(ChainMessage::GetBlockHeaders(lwcid, gbh)) => {
-                self.forward_message(lwcid, Inbound::GetBlockHeaders, gbh)
-            }
-            Message::UserMessage(ChainMessage::BlockHeaders(lwcid, bh)) => {
-                self.forward_message(lwcid, Inbound::BlockHeaders, bh)
-            }
-            Message::UserMessage(ChainMessage::SendTransaction(lwcid, st)) => {
-                self.forward_message(lwcid, Inbound::SendTransaction, st)
-            }
-            Message::UserMessage(ChainMessage::TransactionReceived(lwcid, r)) => {
-                self.forward_message(lwcid, Inbound::TransactionReceived, r)
-            }
-            Message::UserMessage(ChainMessage::GetBlocks(lwcid, gb)) => self.forward_message(lwcid, Inbound::GetBlocks, gb),
-            Message::UserMessage(ChainMessage::Block(lwcid, b)) => self.forward_message(lwcid, Inbound::Block, b),
-            Message::UserMessage(ChainMessage::Subscribe(lwcid, keep_alive)) => {
-                self.forward_message(lwcid, Inbound::Subscribe, keep_alive)
-            }
             Message::Bytes(lwcid, bytes) => self.forward_message(lwcid, Inbound::Data, bytes),
+            Message::UserMessage(msg) => {
+                let msg: ChainMessage<B, Q> = msg;
+                match msg {
+                    ChainMessage::GetBlockHeaders(lwcid, gbh) => {
+                        let f: fn(
+                            nt::LightWeightConnectionId,
+                            GetBlockHeaders<B::BlockId>,
+                        ) -> Inbound<B, Q> = Inbound::GetBlockHeaders;
+                        self.forward_message(lwcid, f, gbh)
+                    }
+                    ChainMessage::BlockHeaders(lwcid, bh) => {
+                        let bh: Response<BlockHeaders<B::Header>, String> = bh;
+                        let f: fn(
+                            nt::LightWeightConnectionId,
+                            Response<BlockHeaders<B::Header>, String>,
+                        ) -> Inbound<B, Q> = Inbound::BlockHeaders;
+                        self.forward_message(lwcid, f, bh)
+                    }
+                    ChainMessage::SendTransaction(lwcid, st) => {
+                        self.forward_message(lwcid, Inbound::SendTransaction, st)
+                    }
+                    ChainMessage::TransactionReceived(lwcid, r) => {
+                        self.forward_message(lwcid, Inbound::TransactionReceived, r)
+                    }
+                    ChainMessage::GetBlocks(lwcid, gb) => {
+                        self.forward_message(lwcid, Inbound::GetBlocks, gb)
+                    }
+                    ChainMessage::Block(lwcid, b) => self.forward_message(lwcid, Inbound::Block, b),
+                    ChainMessage::Subscribe(lwcid, keep_alive) => {
+                        self.forward_message(lwcid, Inbound::Subscribe, keep_alive)
+                    }
+                }
+            }
         }
     }
 
     fn process_new_light_connection(
         &mut self,
         lwcid: nt::LightWeightConnectionId,
-    ) -> Result<Inbound<B,Q>, InboundError> {
+    ) -> Result<Inbound<B, Q>, InboundError> {
         let mut state = self.state.lock().unwrap();
         if state.server_handles.contains_key(&lwcid) {
             Err(InboundError::RemoteCreatedDuplicatedLightConnection(lwcid))
@@ -162,7 +212,7 @@ impl<T,B: server::block::BlockService,Q: server::transaction::TransactionService
     fn process_close_light_connection(
         &mut self,
         lwcid: nt::LightWeightConnectionId,
-    ) -> Result<Inbound<B,Q>, InboundError> {
+    ) -> Result<Inbound<B, Q>, InboundError> {
         let mut state = self.state.lock().unwrap();
         let result = state.server_handles.remove(&lwcid);
         match result {
@@ -186,7 +236,7 @@ impl<T,B: server::block::BlockService,Q: server::transaction::TransactionService
         &mut self,
         lwcid: nt::LightWeightConnectionId,
         node_id: NodeId,
-    ) -> Result<Inbound<B,Q>, InboundError> {
+    ) -> Result<Inbound<B, Q>, InboundError> {
         let mut state = self.state.lock().unwrap();
         if let Some(light_connection) = state.server_handles.get_mut(&lwcid) {
             light_connection.node = Some(node_id);
@@ -200,7 +250,7 @@ impl<T,B: server::block::BlockService,Q: server::transaction::TransactionService
         &mut self,
         lwcid: nt::LightWeightConnectionId,
         node_id: NodeId,
-    ) -> Result<Inbound<B,Q>, InboundError> {
+    ) -> Result<Inbound<B, Q>, InboundError> {
         let mut state = self.state.lock().unwrap();
         match state.server_handles.get_mut(&lwcid) {
             None => {
@@ -228,9 +278,9 @@ impl<T,B: server::block::BlockService,Q: server::transaction::TransactionService
         lwcid: nt::LightWeightConnectionId,
         f: F,
         t: A,
-    ) -> Result<Inbound<B,Q>, InboundError>
+    ) -> Result<Inbound<B, Q>, InboundError>
     where
-        F: FnOnce(nt::LightWeightConnectionId, A) -> Inbound<B,Q>,
+        F: FnOnce(nt::LightWeightConnectionId, A) -> Inbound<B, Q>,
     {
         let state = self.state.lock().unwrap();
         let light_connection = state.server_handles.get(&lwcid).cloned();

@@ -75,6 +75,7 @@ pub trait BlockService {
         from: &[Self::BlockId],
         to: &Self::BlockId,
     ) -> Self::StreamBlocksToTipFuture;
+    fn block_headers_to_tip(&mut self, from: &[Self::BlockId]) -> Self::GetHeadersFuture;
 }
 
 /// Represents errors that can be returned by the node service implementation.

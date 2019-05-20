@@ -461,7 +461,7 @@ impl Storage {
         if !dir.exists() {
             return Err(Error::EpochNotFound(epoch_id));
         }
-        fs::remove_dir(dir)?;
+        fs::remove_dir_all(dir)?;
         self.chain_height_idx.packed_idx.pop();
         Ok(())
     }

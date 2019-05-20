@@ -148,7 +148,7 @@ pub fn epoch_read_pack(config: &StorageConfig, epochid: EpochId) -> Result<PackH
 pub fn epoch_read_chainstate_ref(config: &StorageConfig, epochid: EpochId) -> Result<HeaderHash> {
     let mut sz = [0u8; hash::HASH_SIZE];
     read_bytes_at_offset(config, epochid, EPOCH_CHAINSTATE_REF_OFFSET, &mut sz)?;
-    Ok(HeaderHash::new(&sz))
+    Ok(HeaderHash::from(sz))
 }
 
 pub fn epoch_read_size(config: &StorageConfig, epochid: EpochId) -> Result<serialize::Size> {

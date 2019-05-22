@@ -401,31 +401,7 @@ fn perform_rollback(
             Err(e) => panic!("Can't lock storage! {:?}", e),
         }
     } else {
-        // Either we are syncing historical data and rollback is in old epoch
-        // Or we dropped all loose blocks and now latest tip is in packed epoch
-        let current_epoch = last_date.get_epochid();
-        match storage.write() {
-            Ok(mut storage) => {
-                let last_packed_epoch = (storage.packed_epochs_len() - 1) as u64;
-                if current_epoch == last_packed_epoch {
-                    // We are inside last packed epoch
-                    // Drop current epoch and roll back to previous one
-                    storage.drop_packed_epoch(current_epoch)?;
-                } else {
-                    panic!(
-                        "Rollback while in a stable epoch, but current epoch does not match last packed epoch! (current_epoch={}, last_packed_epoch={})",
-                        current_epoch,
-                        last_packed_epoch,
-                    );
-                }
-            }
-            Err(e) => panic!("Can't lock storage! {:?}", e),
-        }
-        return Ok(restore_previous_tip_for_epoch(
-            current_epoch,
-            net_cfg,
-            storage_config,
-        ));
+        panic!("Syncing historical data and rollback is in old epoch, or dropped all loose blocks and latest tip in packed epoch.");
     }
 }
 

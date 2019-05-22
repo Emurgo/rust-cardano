@@ -214,7 +214,9 @@ impl Storage {
                 if !header.is_boundary_block() {
                     if let Some(prev_tip_diff) = prev_diff {
                         // Here we are going bavkward in history, so check next height is lower
-                        assert!((new_tip_diff < prev_tip_diff) & (prev_tip_diff - new_tip_diff == 1));
+                        assert!(
+                            (new_tip_diff < prev_tip_diff) && (prev_tip_diff - new_tip_diff == 1)
+                        );
                     }
                 }
                 prev_diff = Some(new_tip_diff);

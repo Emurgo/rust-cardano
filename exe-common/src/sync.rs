@@ -386,7 +386,7 @@ fn perform_rollback(
                 // We drop either whole index, or just stability tail
                 let drop = min(len, net_cfg.epoch_stability_depth);
                 storage
-                    .loose_index_drop_from_head(drop)
+                    .loose_index_drop_from_head(drop, true)
                     .expect("Failed to drop loose index head!");
                 // Find new tip after rollback
                 let tip = if len > drop {

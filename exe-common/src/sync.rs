@@ -326,6 +326,7 @@ fn net_sync_to<A: Api>(
                 storage.clone(),
                 &net_cfg,
                 &last_date,
+                &chain_state.last_block,
                 first_unstable_epoch,
             )?;
             // Restore new chain state after the rollback
@@ -372,6 +373,7 @@ fn perform_rollback(
     storage: Arc<RwLock<Storage>>,
     net_cfg: &net::Config,
     last_date: &BlockDate,
+    last_block: &HeaderHash,
     first_unstable_epoch: EpochId,
 ) -> Result<HeaderHash> {
     if last_date.get_epochid() >= first_unstable_epoch {
@@ -404,13 +406,17 @@ fn perform_rollback(
         // Either we are syncing historical data and rollback is in old epoch
         // Or we dropped all loose blocks and now latest tip is in packed epoch
         let current_epoch = last_date.get_epochid();
+        assert_ne!(current_epoch, 0, "Cannot roll back first epoch");
         match storage.write() {
             Ok(mut storage) => {
                 let last_packed_epoch = (storage.packed_epochs_len() - 1) as u64;
                 if current_epoch == last_packed_epoch {
                     // We are inside last packed epoch
                     // Drop current epoch and roll back to previous one
-                    storage.drop_packed_epoch(current_epoch)?;
+                    // Note: last_block must be the last block in an epoch in order for it to find the correct
+                    //       chain_state hash to delete.
+                    assert_eq!(last_date.slotid(), Some((net_cfg.epoch_stability_depth * 10 - 1) as u16));
+                    storage.drop_packed_epoch(current_epoch, last_block)?;
                 } else {
                     panic!(
                         "Rollback while in a stable epoch, but current epoch does not match last packed epoch! (current_epoch={}, last_packed_epoch={})",

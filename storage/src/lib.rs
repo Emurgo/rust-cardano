@@ -459,7 +459,7 @@ impl Storage {
         Ok(())
     }
 
-    pub fn drop_packed_epoch(&mut self, epoch_id: EpochId) -> Result<()> {
+    pub fn drop_packed_epoch(&mut self, epoch_id: EpochId, last_block: &HeaderHash) -> Result<()> {
         let dir = self.config.get_epoch_dir(epoch_id);
         let last_packed = (self.packed_epochs_len() - 1) as u64;
         if epoch_id != last_packed {
@@ -470,6 +470,15 @@ impl Storage {
         }
         fs::remove_dir_all(dir)?;
         self.chain_height_idx.packed_idx.pop();
+        let pack_hash = match self.block_location(&types::header_to_blockhash(last_block))? {
+            BlockLocation::Packed(pack_hash, _) => pack_hash,
+            BlockLocation::Offset(pack_hash, _) => pack_hash,
+            BlockLocation::Loose(_) => panic!("header must be in the packed epoch to drop"),
+        };
+        self.lookups.remove(&pack_hash);
+        fs::remove_file(self.config.get_pack_filepath(&pack_hash))?;
+        fs::remove_file(self.config.get_index_filepath(&pack_hash))?;
+        fs::remove_file(self.config.get_chain_state_filepath(last_block.as_hash_bytes()))?;
         Ok(())
     }
 }

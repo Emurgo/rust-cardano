@@ -415,7 +415,10 @@ fn perform_rollback(
                     // Drop current epoch and roll back to previous one
                     // Note: last_block must be the last block in an epoch in order for it to find the correct
                     //       chain_state hash to delete.
-                    assert_eq!(last_date.slotid(), Some((net_cfg.epoch_stability_depth * 10 - 1) as u16));
+                    assert_eq!(
+                        last_date.slotid(),
+                        Some((net_cfg.epoch_stability_depth * 10 - 1) as u16)
+                    );
                     storage.drop_packed_epoch(current_epoch, last_block)?;
                 } else {
                     panic!(

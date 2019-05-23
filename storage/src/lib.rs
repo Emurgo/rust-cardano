@@ -442,7 +442,11 @@ impl Storage {
         self.chain_height_idx.packed_idx.len()
     }
 
-    pub fn loose_index_drop_from_head(&mut self, len: usize, delete_dropped_blobs: bool) -> Result<()> {
+    pub fn loose_index_drop_from_head(
+        &mut self,
+        len: usize,
+        delete_dropped_blobs: bool,
+    ) -> Result<()> {
         let read_idx = self.chain_height_idx.loose_idx.clone();
         let size = read_idx.len();
         if size < len {
@@ -478,7 +482,10 @@ impl Storage {
         self.lookups.remove(&pack_hash);
         fs::remove_file(self.config.get_pack_filepath(&pack_hash))?;
         fs::remove_file(self.config.get_index_filepath(&pack_hash))?;
-        fs::remove_file(self.config.get_chain_state_filepath(last_block.as_hash_bytes()))?;
+        fs::remove_file(
+            self.config
+                .get_chain_state_filepath(last_block.as_hash_bytes()),
+        )?;
         Ok(())
     }
 }

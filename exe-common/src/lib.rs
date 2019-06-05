@@ -1,5 +1,6 @@
 extern crate cardano;
 extern crate cardano_storage;
+#[macro_use]
 extern crate cbor_event;
 extern crate protocol;
 extern crate rand;

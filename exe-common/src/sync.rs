@@ -647,3 +647,446 @@ pub fn get_chain_state_at_end_of(
         &chain_state::get_last_block_of_epoch(storage, epoch_id)?,
     )?)
 }
+
+#[cfg(test)]
+mod test {
+    use super::*;
+    use crate::network::Result;
+    use cardano::{
+        address::*,
+        block::{sign::*, types::*, *},
+        config::*,
+        hdwallet::*,
+        *,
+    };
+    use cbor_event::{self, de::Deserialize, de::Deserializer, se::Serializer};
+    use std::{collections::BTreeMap, str::FromStr};
+
+    // the codebase has this number hard-coded in a tonne of places
+    // so we better use the same one.
+    static SLOTS_PER_EPOCH: u16 = 21600;
+
+    struct LocalTestingPeer<'a> {
+        genesis_data: &'a GenesisData,
+        blocks: BTreeMap<HeaderHash, Block>,
+        historical_blocks: BTreeMap<HeaderHash, Block>,
+        tip: HeaderHash,
+        leader_xpub: XPub,
+        leader_xprv: XPrv,
+        // To prevent blocks that we fork and recreate from having identical hashes,
+        // we stuff a nonce into their extra_data field, or else we can never trigger a fork
+        // since the new fork will be identical to the old one (and thus have the same hashes!)
+        nonce: u64,
+    }
+
+    impl<'a> LocalTestingPeer<'a> {
+        pub fn new(genesis_data: &'a GenesisData, leader_xprv: XPrv) -> Self {
+            Self {
+                genesis_data: genesis_data,
+                blocks: BTreeMap::new(),
+                historical_blocks: BTreeMap::new(),
+                tip: genesis_data.genesis_prev.clone(),
+                leader_xpub: leader_xprv.public(),
+                leader_xprv: leader_xprv,
+                nonce: 0,
+            }
+        }
+
+        pub fn fork(&mut self, mut depth: u64) -> Vec<HeaderHash> {
+            let mut removed = Vec::new();
+            while depth > 0 {
+                let prev = self
+                    .blocks
+                    .remove(&self.tip)
+                    .unwrap()
+                    .header()
+                    .previous_header();
+                removed.push(self.tip.clone());
+                self.tip = prev;
+                depth -= 1;
+            }
+            removed
+        }
+
+        pub fn make_boundary_block(&self, date: &BlockDate) -> Block {
+            assert!(date.is_boundary());
+            let boundary_body = boundary::Body {
+                slot_leaders: vec![StakeholderId::new(&self.leader_xpub); SLOTS_PER_EPOCH as usize],
+            };
+            let boundary_header = boundary::BlockHeader::new(
+                self.genesis_data.protocol_magic,
+                self.tip.clone(),
+                boundary::BodyProof(hash::Blake2b256::new(&cbor!(&boundary_body).unwrap())),
+                boundary::Consensus {
+                    epoch: date.get_epochid(),
+                    chain_difficulty: ChainDifficulty::from(date.slot_number() as u64),
+                },
+                BlockHeaderAttributes(cbor_event::Value::U64(0)),
+            );
+            Block::BoundaryBlock(boundary::Block {
+                header: boundary_header,
+                body: boundary_body,
+                extra: cbor_event::Value::U64(0),
+            })
+        }
+
+        pub fn create_block(&mut self) {
+            let date = if self.tip == self.genesis_data.genesis_prev {
+                BlockDate::from(0 as EpochId)
+            } else {
+                let prev_date = self.blocks.get(&self.tip).unwrap().header().blockdate();
+                // BlockDate::next() does *not* handle wrap around, just a TODO there...
+                if prev_date.slotid().is_some()
+                    && prev_date.slotid().unwrap() >= SLOTS_PER_EPOCH - 1
+                {
+                    BlockDate::from(prev_date.get_epochid() + 1 as EpochId)
+                } else {
+                    prev_date.next()
+                }
+            };
+            let block = if date.is_boundary() {
+                self.make_boundary_block(&date)
+            } else {
+                let body = normal::Body::new(
+                    normal::TxPayload::empty(),
+                    normal::SscPayload::fake(),
+                    normal::DlgPayload(cbor_event::Value::U64(self.nonce)),
+                    update::UpdatePayload {
+                        proposal: None,
+                        votes: Vec::new(),
+                    },
+                );
+                let extra = cbor_event::Value::U64(0);
+                self.nonce += 1;
+
+                let body_proof = normal::BodyProof::generate_from_body(&body);
+                let slot_id = match date {
+                    BlockDate::Boundary(_) => unreachable!(),
+                    BlockDate::Normal(epochslot) => epochslot,
+                };
+                let chain_difficulty = ChainDifficulty::from(date.slot_number() as u64 + 1);
+                let header_extra_data = HeaderExtraData::new(
+                    BlockVersion::new(1, 0, 0),
+                    SoftwareVersion::new("rollbacktest", 0).unwrap(),
+                    BlockHeaderAttributes(cbor_event::Value::U64(0)),
+                    hash::Blake2b256::new(&cbor!(&extra).unwrap()),
+                );
+                let boot_stakeholder = self
+                    .genesis_data
+                    .boot_stakeholders
+                    .get(&StakeholderId::new(&self.leader_xpub))
+                    .unwrap();
+
+                let mut proxy_sig_message = vec!['0' as u8, '1' as u8];
+                proxy_sig_message.extend(boot_stakeholder.issuer_pk.as_ref());
+                proxy_sig_message.push(tags::SigningTag::MainBlockHeavy as u8);
+                Serializer::new(&mut proxy_sig_message)
+                    .serialize(&self.genesis_data.protocol_magic)
+                    .unwrap()
+                    .write_array(cbor_event::Len::Len(5))
+                    .unwrap()
+                    .serialize(&self.tip)
+                    .unwrap()
+                    .serialize(&body_proof)
+                    .unwrap()
+                    .serialize(&slot_id)
+                    .unwrap()
+                    .serialize(&chain_difficulty)
+                    .unwrap()
+                    .serialize(&header_extra_data)
+                    .unwrap();
+                let proxy_sig = ProxySignature {
+                    psk: ProxySecretKey {
+                        omega: 0,
+                        issuer_pk: boot_stakeholder.issuer_pk.clone(),
+                        delegate_pk: boot_stakeholder.delegate_pk.clone(),
+                        cert: boot_stakeholder.cert.clone(),
+                    },
+                    sig: self.leader_xprv.sign::<()>(&proxy_sig_message),
+                };
+                let header = normal::BlockHeader::new(
+                    self.genesis_data.protocol_magic,
+                    self.tip.clone(),
+                    body_proof,
+                    normal::Consensus {
+                        slot_id: slot_id,
+                        leader_key: self.leader_xpub,
+                        chain_difficulty: chain_difficulty,
+                        block_signature: BlockSignature::ProxyHeavy(proxy_sig),
+                    },
+                    header_extra_data,
+                );
+                Block::MainBlock(normal::Block::new(header, body, extra))
+            };
+            self.tip = block.header().compute_hash();
+            self.historical_blocks
+                .insert(self.tip.clone(), block.clone());
+            self.blocks.insert(self.tip.clone(), block);
+        }
+
+        fn should_not_call() -> ! {
+            panic!("should not be called, only rollback testing here.")
+        }
+    }
+
+    impl<'a> Api for LocalTestingPeer<'a> {
+        fn get_tip(&mut self) -> Result<BlockHeader> {
+            Ok(self.blocks.get(&self.tip).unwrap().get_header())
+        }
+
+        fn wait_for_new_tip(&mut self, _prev_tip: &HeaderHash) -> Result<BlockHeader> {
+            Self::should_not_call()
+        }
+
+        fn get_block(&mut self, _hash: &HeaderHash) -> Result<RawBlock> {
+            Self::should_not_call()
+        }
+
+        fn get_blocks<F>(
+            &mut self,
+            from: &BlockRef,
+            inclusive: bool,
+            to: &BlockRef,
+            got_block: &mut F,
+        ) -> Result<()>
+        where
+            F: FnMut(&HeaderHash, &Block, &RawBlock) -> BlockReceivingFlag,
+        {
+            if self.blocks.get(&from.hash).is_none() {
+                // this error is to trigger a rollback
+                return Err(ProtocolError(ServerError(
+                    "handleStreamStart:strean Failed to find lca".to_string(),
+                )));
+            }
+
+            let mut hashes_to_stream = Vec::new();
+            let mut cur_hash = to.hash.clone();
+            while cur_hash != from.hash {
+                let block = self.blocks.get(&cur_hash).unwrap();
+                hashes_to_stream.push(cur_hash.clone());
+                cur_hash = block.header().previous_header();
+            }
+            if inclusive {
+                hashes_to_stream.push(from.hash.clone());
+            }
+            for hash in hashes_to_stream.iter().rev() {
+                let block = self.blocks.get(&hash).unwrap();
+                let raw_block = RawBlock::from_dat(cbor!(block).unwrap());
+                if got_block(&hash, &block, &raw_block) == BlockReceivingFlag::Stop {
+                    return Ok(());
+                }
+            }
+            Ok(())
+        }
+
+        fn send_transaction(&mut self, _txaux: cardano::tx::TxAux) -> Result<bool> {
+            Self::should_not_call()
+        }
+    }
+
+    // create a directory for test storage and clean up afterwards
+    // this is to stop a failed test from not cleaning up afterwards
+    struct TestDir {
+        path: std::path::PathBuf,
+    }
+
+    impl TestDir {
+        pub fn new(name: &str) -> Self {
+            let path = std::path::PathBuf::from(name);
+            // avoid old data possibly influencing test results
+            assert!(!path.exists());
+            std::fs::create_dir_all(&path).unwrap();
+            TestDir { path: path }
+        }
+
+        pub fn get_path(&self) -> &std::path::PathBuf {
+            &self.path
+        }
+    }
+
+    impl Drop for TestDir {
+        fn drop(&mut self) {
+            // clear all data saved as part of test
+            std::fs::remove_dir_all(&self.path).unwrap();
+        }
+    }
+
+    fn test_rollback_impl(
+        dir: &str,
+        initial_blocks: u64,
+        fork_depth: u64,
+        new_blocks: u64,
+    ) -> (Arc<RwLock<Storage>>, TestDir) {
+        let test_dir = TestDir::new(dir);
+
+        // Set up a minimal blockchain history
+        let leader_xprv = XPrv::generate_from_seed(&Seed::from_bytes([23; SEED_SIZE]));
+        let leader_xpub = leader_xprv.public();
+        let mut boot_stakeholders = BTreeMap::new();
+        let leader_boot_stakeholder = BootStakeholder {
+            weight: 1,
+            issuer_pk: XPrv::generate_from_seed(&Seed::from_bytes([42; SEED_SIZE])).public(),
+            delegate_pk: leader_xpub,
+            cert: leader_xprv.sign::<()>(&[0; 64]),
+        };
+        boot_stakeholders.insert(StakeholderId::new(&leader_xpub), leader_boot_stakeholder);
+        let genesis_data = config::GenesisData {
+            genesis_prev: cardano::block::HeaderHash::new(
+                &[0; cardano::hash::Blake2b256::HASH_SIZE],
+            ),
+            epoch_stability_depth: 2160,
+            start_time: SystemTime::UNIX_EPOCH + Duration::from_secs(1548089245),
+            slot_duration: Duration::from_millis(20000),
+            protocol_magic: ProtocolMagic::from(1097911063), /* testnet */
+            fee_policy: fee::LinearFee::new(fee::Milli::integral(155381), fee::Milli::new(43, 946)),
+            avvm_distr: BTreeMap::new(),
+            non_avvm_balances: BTreeMap::new(),
+            boot_stakeholders: boot_stakeholders,
+        };
+        let storage = Arc::new(RwLock::new(
+            Storage::init(&StorageConfig::new(test_dir.get_path()))
+                .expect("can't create local storage"),
+        ));
+        let mut net = LocalTestingPeer::new(&genesis_data, leader_xprv);
+        let net_config = net::Config {
+            genesis: net
+                .make_boundary_block(&BlockDate::from(0 as EpochId))
+                .header()
+                .compute_hash(),
+            genesis_prev: genesis_data.genesis_prev.clone(),
+            epoch_stability_depth: genesis_data.epoch_stability_depth,
+            protocol_magic: genesis_data.protocol_magic,
+            epoch_start: 0,
+            peers: net::Peers::new(),
+        };
+
+        // Sync once to get blocks into storage
+        for _ in 0..initial_blocks {
+            net.create_block();
+        }
+        let tip = net.get_tip().unwrap();
+        net_sync_to(&mut net, &net_config, &genesis_data, storage.clone(), &tip)
+            .expect("sync failed");
+
+        // Fork and generate new blocks in a longer chain and sync again to trigger the rollback
+        let removed = net.fork(fork_depth);
+        for _ in 0..new_blocks {
+            net.create_block();
+        }
+        let tip = net.get_tip().unwrap();
+        // We need to sync again as the previous sync rolls back but does not sync to the new chain.
+        // Also, sometimes multiple resyncs are needed to fully roll back in the first place.
+        loop {
+            net_sync_to(&mut net, &net_config, &genesis_data, storage.clone(), &tip)
+                .expect("sync failed");
+
+            let new_tip = tag::read_hash(&storage.read().unwrap(), &tag::HEAD).unwrap();
+            if new_tip == tip.compute_hash() {
+                break;
+            }
+        }
+
+        // Check that only the new chain is in storage
+        let storage_read = storage.read().unwrap();
+        for removed_hash in removed.iter() {
+            assert!(!storage_read
+                .block_exists(&cardano_storage::types::header_to_blockhash(&removed_hash))
+                .unwrap());
+        }
+        for (new_fork_hash, new_fork_block) in net.blocks.iter() {
+            assert!(storage_read
+                .block_exists(&cardano_storage::types::header_to_blockhash(&new_fork_hash))
+                .unwrap());
+        }
+
+        // Check that the storage chain is exactly the new chain
+        let head = tag::read_hash(&storage.read().unwrap(), &tag::HEAD).unwrap();
+        let mut storage_blocks_len: usize = 0;
+        for block in storage_read.reverse_from(head).unwrap() {
+            let raw_net_block =
+                cbor!(net.blocks.get(&block.header().compute_hash()).unwrap()).unwrap();
+            let raw_block = cbor!(block).unwrap();
+            assert_eq!(raw_net_block, raw_block);
+            storage_blocks_len += 1;
+            if block.header().blockdate() == BlockDate::Boundary(0) {
+                break;
+            }
+        }
+        assert_eq!(storage_blocks_len, net.blocks.len());
+
+        std::mem::drop(storage_read);
+        (storage.clone(), test_dir)
+    }
+
+    static BLOCKS_PER_EPOCH: u64 = SLOTS_PER_EPOCH as u64 + 1;
+
+    #[test]
+    #[ignore]
+    fn test_rollback_past_stability() {
+        test_rollback_impl(
+            "test_rollback_past_stability",
+            BLOCKS_PER_EPOCH + 3000,
+            3,
+            6,
+        );
+    }
+
+    #[test]
+    #[ignore]
+    fn test_rollback_before_stability_within_epoch() {
+        test_rollback_impl(
+            "test_rollback_before_stability_within_epoch",
+            BLOCKS_PER_EPOCH + 300,
+            7,
+            15,
+        );
+    }
+
+    #[test]
+    #[ignore]
+    fn test_rollback_before_stability_undo_last_epoch() {
+        test_rollback_impl(
+            "test_rollback_before_stability_undo_last_epoch",
+            BLOCKS_PER_EPOCH,
+            100,
+            200,
+        );
+    }
+
+    #[test]
+    #[ignore]
+    fn test_rollback_smaller_fork() {
+        test_rollback_impl("test_rollback_smaller_fork", BLOCKS_PER_EPOCH + 100, 30, 20);
+    }
+
+    #[test]
+    #[ignore]
+    fn test_rollback_to_boundary() {
+        test_rollback_impl(
+            "test_rollback_to_boundary",
+            BLOCKS_PER_EPOCH + 2161,
+            2160,
+            2200,
+        );
+        test_rollback_impl(
+            "test_rollback_to_boundary",
+            BLOCKS_PER_EPOCH + 2162,
+            2160,
+            2200,
+        );
+    }
+
+    #[test]
+    #[ignore]
+    #[should_panic(
+        expected = "Syncing historical data and rollback is in old epoch, or dropped all loose blocks and latest tip in packed epoch."
+    )]
+    fn test_rollback_forked_past_stability_depth() {
+        test_rollback_impl(
+            "test_rollback_forked_past_stability_depth",
+            2 * BLOCKS_PER_EPOCH + 7000,
+            8000,
+            9000,
+        );
+    }
+}

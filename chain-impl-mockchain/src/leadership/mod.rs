@@ -1,7 +1,7 @@
 use crate::{
     block::{AnyBlockVersion, BlockDate, BlockVersion, ConsensusVersion, Header},
     date::Epoch,
-    ledger::Ledger,
+    ledger::{Ledger, LedgerParameters},
     stake::StakePoolId,
 };
 use chain_crypto::{Curve25519_2HashDH, Ed25519Extended, SecretKey, SumEd25519_12};
@@ -71,10 +71,16 @@ enum LeadershipConsensus {
     GenesisPraos(genesis::GenesisLeaderSelection),
 }
 
+/// Leadership represent a given epoch and their associated leader or metadata.
 pub struct Leadership {
+    // Specific epoch where the leadership apply
     epoch: Epoch,
+    // Give the closest parameters associated with date keeping given a leadership
     era: TimeEra,
+    // Consensus specific metadata required for verifying/evaluating leaders
     inner: LeadershipConsensus,
+    // Ledger evaluation parameters fixed for a given epoch
+    ledger_parameters: LedgerParameters,
 }
 
 impl LeadershipConsensus {
@@ -85,6 +91,9 @@ impl LeadershipConsensus {
                 Verification::Success
             }
             LeadershipConsensus::Bft(_) if block_version == BlockVersion::Ed25519Signed => {
+                Verification::Success
+            }
+            LeadershipConsensus::GenesisPraos(_) if block_version == BlockVersion::KesVrfproof => {
                 Verification::Success
             }
             _ => Verification::Failure(Error::new(ErrorKind::IncompatibleBlockVersion)),
@@ -142,6 +151,7 @@ impl Leadership {
             epoch: epoch,
             era: ledger.settings.era.clone(),
             inner,
+            ledger_parameters: ledger.get_ledger_parameters(),
         }
     }
 
@@ -151,10 +161,29 @@ impl Leadership {
         self.epoch
     }
 
+    /// Create a Block date given a leadership and a relative epoch slot
+    ///
+    /// # Panics
+    ///
+    /// If the slot index is not valid given the leadership, out of bound date
+    pub fn date_at_slot(&self, slot_id: u32) -> BlockDate {
+        assert!(slot_id < self.era.slots_per_epoch());
+        BlockDate {
+            epoch: self.epoch(),
+            slot_id: slot_id,
+        }
+    }
+
     /// get the TimeEra associated to the `Leadership`
     #[inline]
     pub fn era(&self) -> &TimeEra {
         &self.era
+    }
+
+    /// access the ledger parameter for the current leadership
+    #[inline]
+    pub fn ledger_parameters(&self) -> &LedgerParameters {
+        &self.ledger_parameters
     }
 
     /// Verify whether this header has been produced by a leader that fits with the leadership
@@ -206,10 +235,13 @@ impl Error {
         }
     }
 
-    pub fn new_(kind: ErrorKind, cause: Box<dyn std::error::Error>) -> Self {
+    pub fn new_<E>(kind: ErrorKind, cause: E) -> Self
+    where
+        E: std::error::Error + 'static,
+    {
         Error {
             kind: kind,
-            cause: Some(cause),
+            cause: Some(Box::new(cause)),
         }
     }
 }

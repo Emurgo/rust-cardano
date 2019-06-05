@@ -26,6 +26,7 @@ cfg_if! {
 pub mod algorithms;
 pub mod asymlock;
 pub mod bech32;
+mod evolving;
 pub mod hash;
 mod hex;
 mod kes;
@@ -33,10 +34,11 @@ mod key;
 mod sign;
 mod vrf;
 
+pub use evolving::{EvolvingStatus, KeyEvolvingAlgorithm};
 pub use kes::KeyEvolvingSignatureAlgorithm;
 pub use key::{
-    AsymmetricKey, KeyPair, PublicKey, PublicKeyError, SecretKey, SecretKeyError,
-    SecretKeySizeStatic,
+    AsymmetricKey, AsymmetricPublicKey, KeyPair, PublicKey, PublicKeyError, SecretKey,
+    SecretKeyError, SecretKeySizeStatic,
 };
 pub use sign::{Signature, SignatureError, SigningAlgorithm, Verification, VerificationAlgorithm};
 pub use vrf::{

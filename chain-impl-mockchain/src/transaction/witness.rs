@@ -3,7 +3,7 @@ use crate::account;
 use crate::block::HeaderHash;
 use crate::key::{
     deserialize_public_key, deserialize_signature, serialize_public_key, serialize_signature,
-    AccountSecretKey, AccountSignature, SpendingPublicKey, SpendingSecretKey, SpendingSignature,
+    AccountSecretKey, SpendingPublicKey, SpendingSecretKey, SpendingSignature,
 };
 use crate::multisig;
 use chain_core::mempack::{ReadBuf, ReadError, Readable};
@@ -40,6 +40,17 @@ impl PartialEq for Witness {
     }
 }
 impl Eq for Witness {}
+
+impl std::fmt::Display for Witness {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        match self {
+            Witness::Utxo(_) => write!(f, "UTxO Witness"),
+            Witness::Account(_) => write!(f, "Account Witness"),
+            Witness::OldUtxo(_, _) => write!(f, "Old UTxO Witness"),
+            Witness::Multisig(_) => write!(f, "Multisig Witness"),
+        }
+    }
+}
 
 pub struct WitnessUtxoData(Vec<u8>);
 
@@ -111,10 +122,7 @@ impl Witness {
         transaction_id: &TransactionId,
         secret_key: &SpendingSecretKey,
     ) -> Self {
-        Witness::Utxo(SpendingSignature::generate(
-            secret_key,
-            &WitnessUtxoData::new(block0, transaction_id),
-        ))
+        Witness::Utxo(secret_key.sign(&WitnessUtxoData::new(block0, transaction_id)))
     }
 
     pub fn new_account(
@@ -123,10 +131,11 @@ impl Witness {
         spending_counter: &account::SpendingCounter,
         secret_key: &AccountSecretKey,
     ) -> Self {
-        Witness::Account(AccountSignature::generate(
-            secret_key,
-            &WitnessAccountData::new(block0, transaction_id, spending_counter),
-        ))
+        Witness::Account(secret_key.sign(&WitnessAccountData::new(
+            block0,
+            transaction_id,
+            spending_counter,
+        )))
     }
 
     // Verify the given `TransactionId` using the witness.

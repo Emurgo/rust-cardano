@@ -13,7 +13,7 @@ use chain_core::{
     property,
 };
 use chain_crypto::{
-    self, Curve25519_2HashDH, Ed25519Extended, Signature, SumEd25519_12, VerifiableRandomFunction,
+    self, Curve25519_2HashDH, Ed25519, Signature, SumEd25519_12, VerifiableRandomFunction,
 };
 
 pub type HeaderHash = Hash;
@@ -44,7 +44,7 @@ pub struct BftProof {
 }
 
 #[derive(Debug, Clone)]
-pub struct BftSignature(pub(crate) Signature<HeaderToSign, Ed25519Extended>);
+pub struct BftSignature(pub(crate) Signature<HeaderToSign, Ed25519>);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GenesisPraosProof {
@@ -261,16 +261,13 @@ impl Readable for Header {
             }
             AnyBlockVersion::Supported(BlockVersion::KesVrfproof) => {
                 let node_id = StakePoolId::read(buf)?;
-                dbg!(&node_id);
                 let vrf_proof = {
                     let bytes = <[u8;<Curve25519_2HashDH as VerifiableRandomFunction>::VERIFIED_RANDOM_SIZE]>::read(buf)?;
 
                     <Curve25519_2HashDH as VerifiableRandomFunction>::VerifiedRandomOutput::from_bytes_unverified(&bytes)
                         .ok_or(ReadError::StructureInvalid("VRF Proof".to_string()))
                 }?;
-                dbg!(&vrf_proof);
                 let kes_proof = deserialize_signature(buf).map(KESSignature)?;
-                dbg!(&kes_proof);
 
                 Proof::GenesisPraos(GenesisPraosProof {
                     node_id: node_id,
@@ -352,9 +349,9 @@ mod test {
 
     impl Arbitrary for BftProof {
         fn arbitrary<G: Gen>(g: &mut G) -> Self {
-            let sk: chain_crypto::SecretKey<_> = Arbitrary::arbitrary(g);
+            let sk: chain_crypto::SecretKey<Ed25519> = Arbitrary::arbitrary(g);
             let pk = sk.to_public();
-            let signature = chain_crypto::Signature::generate(&sk, &[0u8, 1, 2, 3]);
+            let signature = sk.sign(&[0u8, 1, 2, 3]);
             BftProof {
                 leader_id: bft::LeaderId(pk),
                 signature: BftSignature(signature.coerce()),
@@ -383,9 +380,9 @@ mod test {
                     static ref SK_FIRST: SecretKey<SumEd25519_12> =
                         { SecretKey::generate(&mut ChaChaRng::from_seed([0; 32])) };
                 }
-                let mut sk = SK_FIRST.clone(); // Arbitrary::arbitrary(g);
-                let signature = Signature::generate_update(&mut sk, &[0u8, 1, 2, 3]);
-                KESSignature(signature)
+                let sk = SK_FIRST.clone();
+                let signature = sk.sign(&[0u8, 1, 2, 3]);
+                KESSignature(signature.coerce())
             };
             GenesisPraosProof {
                 node_id: node_id,

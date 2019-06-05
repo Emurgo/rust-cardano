@@ -31,6 +31,11 @@ pub struct GenesisLeaderSelection {
     active_slots_coeff: ActiveSlotsCoeff,
 }
 
+custom_error! {GenesisError
+    InvalidEpoch { expected: Epoch, actual: Epoch } = "Wrong epoch, expected epoch {expected} but received block at epoch {actual}",
+    TotalStakeIsZero = "Total stake is null",
+}
+
 impl GenesisLeaderSelection {
     pub fn new(epoch: Epoch, ledger: &Ledger) -> Self {
         GenesisLeaderSelection {
@@ -49,8 +54,13 @@ impl GenesisLeaderSelection {
         date: BlockDate,
     ) -> Result<Option<Witness>, Error> {
         if date.epoch != self.epoch {
-            // TODO: add more error details: invalid Date
-            return Err(Error::new(ErrorKind::Failure));
+            return Err(Error::new_(
+                ErrorKind::Failure,
+                GenesisError::InvalidEpoch {
+                    actual: date.epoch,
+                    expected: self.epoch,
+                },
+            ));
         }
 
         let stake_snapshot = &self.distribution;
@@ -62,8 +72,10 @@ impl GenesisLeaderSelection {
                 let total_stake: Value = stake_snapshot.total_stake();
 
                 if total_stake == Value::zero() {
-                    // TODO: give more info about the error here...
-                    return Err(Error::new(ErrorKind::Failure));
+                    return Err(Error::new_(
+                        ErrorKind::Failure,
+                        GenesisError::TotalStakeIsZero,
+                    ));
                 }
 
                 let percent_stake = PercentStake {
@@ -83,8 +95,13 @@ impl GenesisLeaderSelection {
 
     pub(crate) fn verify(&self, block_header: &Header) -> Verification {
         if block_header.block_date().epoch != self.epoch {
-            // TODO: add more error details: invalid Date
-            return Verification::Failure(Error::new(ErrorKind::Failure));
+            return Verification::Failure(Error::new_(
+                ErrorKind::Failure,
+                GenesisError::InvalidEpoch {
+                    expected: self.epoch,
+                    actual: block_header.block_date().epoch,
+                },
+            ));
         }
 
         let stake_snapshot = &self.distribution;
@@ -145,19 +162,22 @@ mod test {
     use crate::stake::PoolStakeDistribution;
     use crate::stake::StakePoolInfo;
     use chain_addr::Discrimination;
+    use chain_crypto::KeyPair;
     use std::collections::HashMap;
 
     fn make_pool(ledger: &mut Ledger) -> (StakePoolId, SecretKey<Curve25519_2HashDH>) {
         let mut rng = rand::thread_rng();
 
         let pool_vrf_private_key = SecretKey::generate(&mut rng);
+        let pool_kes: KeyPair<SumEd25519_12> = KeyPair::generate(&mut rng);
+        let (_, pool_kes_public_key) = pool_kes.into_keys();
 
         let pool_info = StakePoolInfo {
             serial: 1234,
             owners: vec![],
             initial_key: GenesisPraosLeader {
                 vrf_public_key: pool_vrf_private_key.to_public(),
-                kes_public_key: SecretKey::generate(&mut rng).to_public(),
+                kes_public_key: pool_kes_public_key,
             },
         };
 

@@ -15,7 +15,7 @@ use network::{
     Error::ProtocolError,
     Peer, Result,
 };
-use protocol::Error::ServerError;
+use protocol::Error::{NttError, ServerError};
 use std::cmp::min;
 use std::mem;
 use std::sync::{Arc, RwLock};
@@ -275,6 +275,8 @@ fn net_sync_to<A: Api>(
                             &tag::HEAD,
                             &chain_state_before.last_block.as_ref(),
                         );
+                        // TODO: remove after network error during sync testing
+                        info!("HEAD now: {}", chain_state_before.last_block);
                     }
                 }
                 is_epoch_with_ebb = date.is_boundary()
@@ -318,7 +320,7 @@ fn net_sync_to<A: Api>(
         },
     );
 
-    if is_rollback || blocks_response_is_rollback(blocks_response, &our_tip) {
+    if is_rollback || blocks_response_is_rollback(blocks_response, &our_tip)? {
         if let Some(last_date) = chain_state.last_date {
             // Perform rollback
             let mut new_tip_hash = perform_rollback(
@@ -345,13 +347,15 @@ fn net_sync_to<A: Api>(
         &tag::HEAD,
         chain_state.last_block.as_ref(),
     );
+    // TODO: remove after network error during sync testing
+    info!("HEAD now: {}", chain_state.last_block);
 
     Ok(())
 }
 
-fn blocks_response_is_rollback(resp: Result<()>, our_tip: &BlockRef) -> bool {
+fn blocks_response_is_rollback(resp: Result<()>, our_tip: &BlockRef) -> Result<bool> {
     match resp {
-        Ok(()) => false,
+        Ok(()) => Ok(false),
         Err(e) => {
             if let ProtocolError(ServerError(s)) = &e {
                 if s.contains("Failed to find lca") {
@@ -359,10 +363,10 @@ fn blocks_response_is_rollback(resp: Result<()>, our_tip: &BlockRef) -> bool {
                         "Detected fork: local tip is no longer part of the chain: {:?}",
                         our_tip
                     );
-                    return true;
+                    return Ok(true);
                 }
             }
-            panic!("`net.get_blocks` error: {:?}", e);
+            Err(e)
         }
     }
 }
@@ -452,7 +456,52 @@ pub fn net_sync<A: Api>(
             .expect("Failed to write net-tip into storage!")
             .net_tip = Some(tip_header.clone());
 
-        net_sync_to(net, net_cfg, genesis_data, storage.clone(), &tip_header)?;
+        let max_sync_attempts = 3;
+        let mut sync_attemps = 1;
+        let mut latest_tip = match storage.read().unwrap().get_block_from_tag(&tag::HEAD) {
+            Ok(block) => Some(block.header().compute_hash()),
+            Err(_) => None,
+        };
+        loop {
+            // Some networking errors can occur occasionally - in these cases, simply retry
+            match net_sync_to(net, net_cfg, genesis_data, storage.clone(), &tip_header) {
+                Ok(()) => {
+                    break;
+                }
+                Err(e) => {
+                    if let ProtocolError(NttError(e)) = &e {
+                        if format!("{:?}", &e).contains("failed to fill whole buffer") {
+                            let new_latest_tip =
+                                match storage.read().unwrap().get_block_from_tag(&tag::HEAD) {
+                                    Ok(block) => Some(block.header().compute_hash()),
+                                    Err(_) => None,
+                                };
+                            // TODO: remove after network error during sync testing
+                            info!("latest_tip     = {:?}", latest_tip);
+                            info!("new_latest_tip = {:?}", new_latest_tip);
+                            if new_latest_tip != latest_tip {
+                                latest_tip = new_latest_tip;
+                                sync_attemps = 1;
+                            }
+                            if sync_attemps < max_sync_attempts {
+                                warn!(
+                                    "networking error in net.get_blocks() - attempt {} / {}",
+                                    sync_attemps, max_sync_attempts
+                                );
+                                std::thread::sleep(Duration::from_secs(10));
+                                continue;
+                            } else {
+                                panic!(
+                                    "max sync attempts ({}) reached for epoch",
+                                    max_sync_attempts
+                                );
+                            }
+                        }
+                    }
+                    panic!("`net_sync_to` error: {:?}", e);
+                }
+            }
+        }
 
         if sync_once {
             break;

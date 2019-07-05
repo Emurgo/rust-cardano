@@ -40,6 +40,7 @@ fn net_sync_to<A: Api>(
     storage: Arc<RwLock<Storage>>,
     tip_header: &BlockHeader,
 ) -> Result<()> {
+    info!("YOU ARE SYNCING TO THE SYNC-NTT-ERROR BRANCH");
     let tip = BlockRef {
         hash: tip_header.compute_hash(),
         parent: tip_header.get_previous_header(),

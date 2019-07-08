@@ -208,6 +208,7 @@ fn net_sync_to<A: Api>(
         is_epoch_with_ebb = last_ebb_epoch == our_tip.date.get_epochid();
     }
 
+    info!("Starting streaming blocks");
     let blocks_response = net.get_blocks(
         &our_tip,
         our_tip_is_genesis,
@@ -221,6 +222,7 @@ fn net_sync_to<A: Api>(
             let chain_state_before = chain_state.clone();
 
             let date = block.header().blockdate();
+            info!("Processing block: {:?}", date);
 
             // Validate block and update current chain state
             // FIXME: propagate errors

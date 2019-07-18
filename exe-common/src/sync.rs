@@ -40,7 +40,6 @@ fn net_sync_to<A: Api>(
     storage: Arc<RwLock<Storage>>,
     tip_header: &BlockHeader,
 ) -> Result<()> {
-    info!("YOU ARE SYNCING TO THE SYNC-NTT-ERROR BRANCH #2");
     let tip = BlockRef {
         hash: tip_header.compute_hash(),
         parent: tip_header.get_previous_header(),
@@ -276,8 +275,6 @@ fn net_sync_to<A: Api>(
                             &tag::HEAD,
                             &chain_state_before.last_block.as_ref(),
                         );
-                        // TODO: remove after network error during sync testing
-                        info!("HEAD now: {}", chain_state_before.last_block);
                     }
                 }
                 is_epoch_with_ebb = date.is_boundary()
@@ -348,8 +345,6 @@ fn net_sync_to<A: Api>(
         &tag::HEAD,
         chain_state.last_block.as_ref(),
     );
-    // TODO: remove after network error during sync testing
-    info!("HEAD now: {}", chain_state.last_block);
 
     Ok(())
 }

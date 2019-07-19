@@ -318,7 +318,7 @@ fn net_sync_to<A: Api>(
         },
     );
 
-    if is_rollback || blocks_response_is_rollback(blocks_response, &our_tip) {
+    if is_rollback || blocks_response_is_rollback(blocks_response, &our_tip)? {
         if let Some(last_date) = chain_state.last_date {
             // Perform rollback
             let mut new_tip_hash = perform_rollback(
@@ -349,9 +349,9 @@ fn net_sync_to<A: Api>(
     Ok(())
 }
 
-fn blocks_response_is_rollback(resp: Result<()>, our_tip: &BlockRef) -> bool {
+fn blocks_response_is_rollback(resp: Result<()>, our_tip: &BlockRef) -> Result<bool> {
     match resp {
-        Ok(()) => false,
+        Ok(()) => Ok(false),
         Err(e) => {
             if let ProtocolError(ServerError(s)) = &e {
                 if s.contains("Failed to find lca") {
@@ -359,10 +359,10 @@ fn blocks_response_is_rollback(resp: Result<()>, our_tip: &BlockRef) -> bool {
                         "Detected fork: local tip is no longer part of the chain: {:?}",
                         our_tip
                     );
-                    return true;
+                    return Ok(true);
                 }
             }
-            panic!("`net.get_blocks` error: {:?}", e);
+            Err(e)
         }
     }
 }

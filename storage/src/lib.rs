@@ -209,17 +209,15 @@ impl Storage {
                 let header = block.header();
                 let entry = Storage::create_loose_index_entry(&header);
                 let new_tip_diff = u64::from(entry.difficulty);
-                // FIXME: add in a new_tip_diff == prev_tip_diff assert for the boundary block case
-                // and verify that this is indeed the proper action and does not panic existing flows.
-                if !header.is_boundary_block() {
-                    if let Some(prev_tip_diff) = prev_diff {
-                        // Here we are going bavkward in history, so check next height is lower
-                        assert!(
-                            (new_tip_diff < prev_tip_diff) && (prev_tip_diff - new_tip_diff == 1)
-                        );
-                    }
+                if let Some(prev_tip_diff) = prev_diff {
+                    // Here we are going bavkward in history, so check next height is lower
+                    assert!((new_tip_diff < prev_tip_diff) && (prev_tip_diff - new_tip_diff == 1));
                 }
-                prev_diff = Some(new_tip_diff);
+                if !header.is_boundary_block() {
+                    // Only update prev diff is currently checked block is not an EBB
+                    // Cuz EBBs don't increment the chain difficulty
+                    prev_diff = Some(new_tip_diff);
+                }
                 // Here we append elements to the end,
                 // because we are iterating from newer block to older
                 self.chain_height_idx.loose_idx.push(entry);

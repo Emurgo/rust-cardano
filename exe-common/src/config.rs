@@ -342,24 +342,24 @@ pub mod net {
             }
         }
 
-        pub fn obft_testnet() -> Self {
+        pub fn testnet2() -> Self {
             let mut peers = Peers::new();
             peers.push(
                 "iohk-hosts".to_string(),
-                Peer::native("52.198.165.239:3000".to_string()),
+                Peer::native("relays.new.cardano-testnet.iohkdev.io:3000".to_string()),
             );
             Config {
                 genesis: HeaderHash::from_str(
-                    &"e84e0a4b9003ed9c320fda1cdc0404e9f7f6b0516e1978aeef2964a3bd6404b0",
+                    &"8f8602837f7c6f8b8867dd1cbc1842cf51a27eaed2c70ef48325d00f8efb320f",
                 )
                 .unwrap(),
                 genesis_prev: HeaderHash::from_str(
-                    &"791f4256e14c67b9035c3b80a0826adf719d3636c18eef16c98b84b833723d51",
+                    &"96fceff972c2c06bd3bb5243c39215333be6d56aaf4823073dca31afe5038471",
                 )
                 .unwrap(),
                 epoch_start: 0,
                 epoch_stability_depth: DEFAULT_EPOCH_STABILITY_DEPTH,
-                protocol_magic: ProtocolMagic::from(170987650),
+                protocol_magic: ProtocolMagic::from(1097911063),
                 peers: peers,
             }
         }

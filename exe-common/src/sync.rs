@@ -216,14 +216,11 @@ fn net_sync_to<A: Api>(
                 return BlockReceivingFlag::Stop;
             }
 
-            // Clone current chain state before validation
-            let chain_state_before = chain_state.clone();
-
             let date = block.header().blockdate();
 
             // Validate block and update current chain state
             // FIXME: propagate errors
-            match chain_state.verify_block(block_hash, block) {
+            match chain_state.validate_block(block_hash, block) {
                 Ok(_) => {}
                 Err(BlockError::WrongPreviousBlock(actual, expected)) => {
                     debug!(
@@ -232,12 +229,11 @@ fn net_sync_to<A: Api>(
                         actual.as_hex(),
                         date
                     );
-                    chain_state = chain_state_before;
                     is_rollback = true;
                     return BlockReceivingFlag::Stop;
                 }
                 Err(err) => panic!(
-                    "Block {} ({}) failed to verify: {:?}",
+                    "Block {} ({}) failed to validate: {:?}",
                     hex::encode(block_hash.as_hash_bytes()),
                     date,
                     err
@@ -248,7 +244,7 @@ fn net_sync_to<A: Api>(
 
             // Calculate if this is a start of a new epoch (including the very first one)
             // And if there's any previous date available (previous epochs)
-            let (is_new_epoch_start, is_prev_date_exists) = match chain_state_before.last_date {
+            let (is_new_epoch_start, is_prev_date_exists) = match chain_state.last_date {
                 None => (true, false),
                 Some(last_date) => (date.get_epochid() > last_date.get_epochid(), true),
             };
@@ -263,7 +259,7 @@ fn net_sync_to<A: Api>(
                             &mut storage.write().unwrap(),
                             genesis_data,
                             epoch_writer_state,
-                            &chain_state_before,
+                            &chain_state,
                             is_epoch_with_ebb,
                         )
                             .unwrap();
@@ -273,11 +269,21 @@ fn net_sync_to<A: Api>(
                         tag::write(
                             &storage.read().unwrap(),
                             &tag::HEAD,
-                            &chain_state_before.last_block.as_ref(),
+                            &chain_state.last_block.as_ref(),
                         );
                     }
                 }
                 is_epoch_with_ebb = date.is_boundary()
+            }
+
+            match chain_state.append_block(block_hash, block) {
+                Ok(_) => {}
+                Err(err) => panic!(
+                    "Block {} ({}) failed to verify at process: {:?}",
+                    hex::encode(block_hash.as_hash_bytes()),
+                    date,
+                    err
+                ),
             }
 
             if date.get_epochid() >= first_unstable_epoch {

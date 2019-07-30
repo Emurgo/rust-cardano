@@ -10,9 +10,16 @@ impl ChainState {
     /// introduced by this block.
     /// FIXME: we may want to return all errors rather than just the first.
     pub fn verify_block(&mut self, block_hash: &HeaderHash, blk: &Block) -> Result<(), Error> {
-        let mut res = Ok(());
+        self.validate_block(block_hash, blk)?;
+        self.append_block(block_hash, blk)
+    }
 
-        add_error(&mut res, self.do_verify(block_hash, blk));
+    pub fn validate_block(&self, block_hash: &HeaderHash, blk: &Block) -> Result<(), Error> {
+        self.do_verify(block_hash, blk)
+    }
+
+    pub fn append_block(&mut self, block_hash: &HeaderHash, blk: &Block) -> Result<(), Error> {
+        let mut res = Ok(());
 
         match blk {
             Block::BoundaryBlock(blk) => {

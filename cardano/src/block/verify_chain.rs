@@ -14,7 +14,7 @@ impl ChainState {
         self.append_block(block_hash, blk)
     }
 
-    pub fn validate_block(&mut self, block_hash: &HeaderHash, blk: &Block) -> Result<(), Error> {
+    pub fn validate_block(&self, block_hash: &HeaderHash, blk: &Block) -> Result<(), Error> {
         self.do_verify(block_hash, blk)
     }
 

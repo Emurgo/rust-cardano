@@ -431,7 +431,7 @@ impl Storage {
                 debug!("Search by height in loose index found EBB. Proceeding with caution.");
                 if (loose_index_len - idx) > 1 {
                     let idx2 = idx+1;
-                    let entry2 = &self.chain_height_idx.loose_idx[idx+1];
+                    let entry2 = &self.chain_height_idx.loose_idx[idx2];
                     let error_msg: Option<&str> =
                         if u64::from(entry2.difficulty) != find_diff {
                             Some("the height does not match")

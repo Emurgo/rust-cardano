@@ -446,14 +446,13 @@ impl Storage {
                 let idx2 = idx + 1;
                 let entry2 = &self.chain_height_idx.loose_idx[idx2];
                 // Validating next found entry
-                let error_msg: Option<&str> =
-                    if u64::from(entry2.difficulty) != find_diff {
-                        Some("the height does not match")
-                    } else if entry2.date.is_boundary() {
-                        Some("it's also an EBB")
-                    } else {
-                        None
-                    };
+                let error_msg: Option<&str> = if u64::from(entry2.difficulty) != find_diff {
+                    Some("the height does not match")
+                } else if entry2.date.is_boundary() {
+                    Some("it's also an EBB")
+                } else {
+                    None
+                };
                 if let Some(error_msg) = error_msg {
                     error!(
                         "Search by height in loose index found EBB. \
@@ -468,7 +467,7 @@ impl Storage {
                         idx2,
                         entry2,
                     );
-                    return Err(Error::BlockHeightNotFound(find_diff))
+                    return Err(Error::BlockHeightNotFound(find_diff));
                 }
                 debug!("Found valid loose alternative at index right before EBB.");
                 return Ok(Some(entry2));

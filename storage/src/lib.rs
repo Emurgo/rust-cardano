@@ -410,6 +410,7 @@ impl Storage {
     /// - Ok of Some entry - if found in loose index
     /// - Ok of None - if requested height is low enough to not be in the index already
     /// - Err of `BlockHeightNotFound` - if requested height is too large and out of index bounds
+    /// NOTE: this function does NOT return EBB, even if it's a part of the loose index
     pub fn get_from_loose_index(
         &self,
         height: ChainDifficulty,
@@ -421,8 +422,44 @@ impl Storage {
                 return Err(Error::BlockHeightNotFound(find_diff));
             }
             let idx = (tip_diff - find_diff) as usize;
-            if self.chain_height_idx.loose_idx.len() > idx {
-                return Ok(Some(&(self.chain_height_idx.loose_idx[idx])));
+            let loose_index_len = self.chain_height_idx.loose_idx.len();
+            if loose_index_len > idx {
+                let entry = &self.chain_height_idx.loose_idx[idx];
+                if !entry.date.is_boundary() {
+                    return Ok(Some(entry));
+                }
+                debug!("Search by height in loose index found EBB. Proceeding with caution.");
+                if (loose_index_len - idx) > 1 {
+                    let idx2 = idx+1;
+                    let entry2 = &self.chain_height_idx.loose_idx[idx+1];
+                    let error_msg: Option<&str> =
+                        if u64::from(entry2.difficulty) != find_diff {
+                            Some("the height does not match")
+                        } else if entry2.date.is_boundary() {
+                            Some("it's also an EBB")
+                        } else {
+                            None
+                        };
+                    if let Some(error_msg) = error_msg {
+                        error!(
+                            "Search by height in loose index found EBB. \
+                            Found older available entry before EBB, but {}. \
+                            This is an invalid state. (searching_for={}, loose_index_len={}, \
+                            loose_index_tip={:?}, ebb_at_index={}, error_at_index={}, error_entry={:?})",
+                            error_msg,
+                            find_diff,
+                            loose_index_len,
+                            idx_tip,
+                            idx,
+                            idx2,
+                            entry2,
+                        );
+                        return Err(Error::BlockHeightNotFound(find_diff))
+                    }
+                    debug!("Found valid loose alternative at index right before EBB.");
+                    return Ok(Some(entry2));
+                }
+                debug!("EBB is the oldest available loose entry. Returning nothing, to continue search in historical data.");
             }
         }
         return Ok(None);

@@ -33,13 +33,8 @@ struct EpochWriterState {
     blobs_to_delete: Vec<HeaderHash>,
 }
 
-fn read_our_tip_and_is_genesis(
-    net_cfg: &net::Config,
-    storage: &Storage,
-
-) -> (BlockRef, bool) {
-    match storage.get_block_from_tag(&tag::HEAD)
-    {
+fn read_our_tip_and_is_genesis(net_cfg: &net::Config, storage: &Storage) -> (BlockRef, bool) {
+    match storage.get_block_from_tag(&tag::HEAD) {
         Err(Error::NoSuchTag) => (
             BlockRef {
                 hash: net_cfg.genesis.clone(),
@@ -87,9 +82,8 @@ fn net_sync_to<A: Api>(
 
     // Start fetching at the current HEAD tag, or the genesis block if
     // it doesn't exist.
-    let (our_tip, our_tip_is_genesis) = read_our_tip_and_is_genesis(
-        net_cfg,
-        &storage.read().unwrap());
+    let (our_tip, our_tip_is_genesis) =
+        read_our_tip_and_is_genesis(net_cfg, &storage.read().unwrap());
 
     let mut is_epoch_with_ebb = false;
 
@@ -157,12 +151,7 @@ fn net_sync_to<A: Api>(
             blobs_to_delete,
         });
 
-
-        append_blocks_to_epoch_reverse(
-            epoch_writer_state.as_mut().unwrap(),
-            chain_state,
-            blocks,
-        )?;
+        append_blocks_to_epoch_reverse(epoch_writer_state.as_mut().unwrap(), chain_state, blocks)?;
     }
     // If the previous epoch has become stable, then we may need to
     // pack it.
@@ -451,9 +440,8 @@ pub fn net_sync<A: Api>(
     // recover and print the TIP of the network
     let mut tip_header = net.get_tip()?;
 
-    let (our_tip, our_tip_is_genesis) = read_our_tip_and_is_genesis(
-        net_cfg,
-        &storage.read().unwrap());
+    let (our_tip, our_tip_is_genesis) =
+        read_our_tip_and_is_genesis(net_cfg, &storage.read().unwrap());
     let mut chain_state = chain_state::restore_chain_state(
         &storage.read().unwrap(),
         genesis_data,
@@ -469,7 +457,14 @@ pub fn net_sync<A: Api>(
             .expect("Failed to write net-tip into storage!")
             .net_tip = Some(tip_header.clone());
 
-        net_sync_to(net, &mut chain_state, net_cfg, genesis_data, storage.clone(), &tip_header)?;
+        net_sync_to(
+            net,
+            &mut chain_state,
+            net_cfg,
+            genesis_data,
+            storage.clone(),
+            &tip_header,
+        )?;
 
         if sync_once {
             break;
@@ -509,7 +504,6 @@ fn maybe_create_epoch(
         epoch_writer_state.epoch_id,
         &mut epoch_writer_state.blobs_to_delete,
     );
-
 
     append_blocks_to_epoch_reverse(&mut epoch_writer_state, chain_state, blocks)?;
 
@@ -981,8 +975,7 @@ mod test {
             net.create_block();
         }
         let tip = net.get_tip().unwrap();
-        net_sync(&mut net, &net_config, &genesis_data, storage.clone(), true)
-            .expect("sync failed");
+        net_sync(&mut net, &net_config, &genesis_data, storage.clone(), true).expect("sync failed");
 
         // Fork and generate new blocks in a longer chain and sync again to trigger the rollback
         let removed = net.fork(fork_depth);

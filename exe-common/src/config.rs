@@ -316,37 +316,17 @@ pub mod net {
             }
         }
 
-        pub fn testnet() -> Self {
-            let mut peers = Peers::new();
-            peers.push(
-                "iohk-hosts".to_string(),
-                Peer::native("relays.cardano-testnet.iohkdev.io:3000".to_string()),
-            );
-            peers.push(
-                "hermes".to_string(),
-                Peer::http("http://hermes.dev.iohkdev.io/testnet".to_string()),
-            );
-            Config {
-                genesis: HeaderHash::from_str(
-                    &"7f141ea26e189c9cb09e2473f6499561011d5d3c90dd642fde859ce02282a3ae",
-                )
-                .unwrap(),
-                genesis_prev: HeaderHash::from_str(
-                    &"b7f76950bc4866423538ab7764fc1c7020b24a5f717a5bee3109ff2796567214",
-                )
-                .unwrap(),
-                epoch_start: 0,
-                epoch_stability_depth: DEFAULT_EPOCH_STABILITY_DEPTH,
-                protocol_magic: ProtocolMagic::from(1097911063),
-                peers: peers,
-            }
-        }
-
+        /*
+        This config is named `testnet2` because it's a new rebooted alternative testnet chain
+        launched by IOHK in replacement for the previous `testnet`. The old config is removed
+        because the network is not operational anymore, but this name is preserved, so that
+        there's no case when someone mixes up the old config with the new one.
+        */
         pub fn testnet2() -> Self {
             let mut peers = Peers::new();
             peers.push(
                 "iohk-hosts".to_string(),
-                Peer::native("relays.new.cardano-testnet.iohkdev.io:3000".to_string()),
+                Peer::native("relays.cardano-testnet.iohkdev.io:3000".to_string()),
             );
             Config {
                 genesis: HeaderHash::from_str(

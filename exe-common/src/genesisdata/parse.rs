@@ -152,7 +152,7 @@ mod test {
         );
 
         let genesis_hash = cardano::block::HeaderHash::from_str(
-            &"b7f76950bc4866423538ab7764fc1c7020b24a5f717a5bee3109ff2796567214",
+            &"96fceff972c2c06bd3bb5243c39215333be6d56aaf4823073dca31afe5038471",
         )
         .unwrap();
 
@@ -167,7 +167,7 @@ mod test {
                 .non_avvm_balances
                 .iter()
                 .find(|(n, _)| n.to_string()
-                    == "2cWKMJemoBaheSTiK9XEtQDf47Z3My8jwN25o5jjm7s7jaXin2nothhWQrTDd8m433M8K")
+                    == "2cWKMJemoBahEJS9xuB3R1ofSgtG621enmfpxfx9Unpo2K26wJPioaA4tizZrNMACNoQb")
                 .unwrap()
                 .1,
             &coin::Coin::new(5428571428571429).unwrap()

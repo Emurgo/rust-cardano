@@ -317,7 +317,7 @@ pub mod net {
         }
 
         /*
-        This config is names `testnet2` because it's a new rebooted alternative testnet chain
+        This config is named `testnet2` because it's a new rebooted alternative testnet chain
         launched by IOHK in replacement for the previous `testnet`. The old config is removed
         because the network is not operational anymore, but this name is preserved, so that
         there's no case when someone mixes up the old config with the new one.

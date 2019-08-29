@@ -166,7 +166,7 @@ mod test {
             genesis_data
                 .non_avvm_balances
                 .iter()
-                .find(|(n, q)| n.to_string()
+                .find(|(n, _)| n.to_string()
                     == "2cWKMJemoBahEJS9xuB3R1ofSgtG621enmfpxfx9Unpo2K26wJPioaA4tizZrNMACNoQb")
                 .unwrap()
                 .1,

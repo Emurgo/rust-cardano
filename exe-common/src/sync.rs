@@ -135,7 +135,6 @@ fn net_sync_to<A: Api>(
         if epoch_id > net_cfg.epoch_start {
             maybe_create_epoch(
                 &mut storage.write().unwrap(),
-                chain_state,
                 genesis_data,
                 epoch_id - 1,
                 &last_block_in_prev_epoch,
@@ -151,7 +150,17 @@ fn net_sync_to<A: Api>(
             blobs_to_delete,
         });
 
-        append_blocks_to_epoch_reverse(epoch_writer_state.as_mut().unwrap(), chain_state, blocks)?;
+        let mut chain_state = chain_state::restore_chain_state(
+            &storage.read().unwrap(),
+            genesis_data,
+            &last_block_in_prev_epoch,
+        )?;
+
+        append_blocks_to_epoch_reverse(
+            epoch_writer_state.as_mut().unwrap(),
+            &mut chain_state,
+            blocks,
+        )?;
     }
     // If the previous epoch has become stable, then we may need to
     // pack it.
@@ -183,7 +192,6 @@ fn net_sync_to<A: Api>(
 
         maybe_create_epoch(
             &mut storage.write().unwrap(),
-            chain_state,
             genesis_data,
             first_unstable_epoch - 1,
             &cur_hash,
@@ -480,7 +488,6 @@ pub fn net_sync<A: Api>(
 // disk.
 fn maybe_create_epoch(
     storage: &mut Storage,
-    chain_state: &mut ChainState,
     genesis_data: &GenesisData,
     epoch_id: EpochId,
     last_block: &HeaderHash,
@@ -505,7 +512,10 @@ fn maybe_create_epoch(
         &mut epoch_writer_state.blobs_to_delete,
     );
 
-    append_blocks_to_epoch_reverse(&mut epoch_writer_state, chain_state, blocks)?;
+    let mut chain_state =
+        chain_state::restore_chain_state(storage, genesis_data, &end_of_prev_epoch)?;
+
+    append_blocks_to_epoch_reverse(&mut epoch_writer_state, &mut chain_state, blocks)?;
 
     finish_epoch(
         storage,
